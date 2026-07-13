@@ -476,7 +476,7 @@ with tabs[6]:
             for k in DW: st.session_state[f"w_{k}"] = float(DW[k])
             st.session_state["thr"] = 0.5; st.rerun()
 
-      INFO = {
+    INFO = {
       "dev_distress": ("Development distress", "Project status is Suspended, Postponed, or Moved to another cluster.",
         "A developer freezing a project it already invested in (queue deposits, studies) is the classic motivated seller: usually prefers selling the position over losing it.",
         "'Detailed Status' column of the Orennia export."),
@@ -513,7 +513,7 @@ with tabs[6]:
       "county_risk": ("County risk (SUBTRACTS)", "The county has a recorded solar restriction/moratorium, or a history of contested/canceled projects.",
         "Not an opportunity — a warning. Local opposition can block repowering or expansion. Hence the negative weight: it penalizes the score without eliminating the project.",
         "Sabin Center 2025 files: Restrictions and Contested Projects, filtered to NC/SC + solar."),
-        }
+    }
     with c2:
         st.markdown('<div class="sect">The 9 screens, explained</div>', unsafe_allow_html=True)
         for k, (nom, que, porque, fuente) in INFO.items():

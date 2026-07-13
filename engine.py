@@ -34,7 +34,7 @@ def match_duke_queue(g, dq):
     return out
 
 # --------------------------------------------------------------- screens
-def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, contested=None):
+def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, contested=None, warn=None):
     out = {}
     op = g[g["Is Operating"]].copy()
 
@@ -95,6 +95,24 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
                 & (dq["fuel_tech"].isin(["Solar", "Battery", "Energy Storage"]))].copy()
         out["withdrawn_queue"] = wd.sort_values("mw", ascending=False)
 
+    # ── screens NO-Orennia ──
+    if dq is not None:
+        wd_all = dq[dq["status"].str.lower() == "withdrawn"]
+        wids = set(wd_all["queue_id"].astype(str).str.strip())
+        m1 = g[g["Queue ID"].astype(str).str.strip().isin(wids)].copy()
+        m1["Reason"] = "Su Queue ID figura como WITHDRAWN en la cola oficial de Duke — distrés confirmado por el utility"
+        out["duke_withdrawn_match"] = m1
+        cw = wd_all.groupby(wd_all["county"].astype(str).str.lower())["mw"].sum()
+        hot = set(cw[cw >= 50].index)
+        m2 = g[g["County"].fillna("").str.lower().isin(hot)].copy()
+        m2["Reason"] = "Condado con ≥50 MW retirados de la cola de Duke — entorno rico en vendedores"
+        out["withdrawal_cluster"] = m2
+    if warn is not None and len(warn) and "energy_relevant" in warn.columns:
+        wcty = set(warn[warn["energy_relevant"] == True]["county"].astype(str).str.lower().str.strip())
+        m3 = g[g["County"].fillna("").str.lower().isin(wcty)].copy()
+        m3["Reason"] = "Aviso WARN energía-relevante en el mismo condado — estrés laboral del sector cerca del activo"
+        out["warn_county"] = m3
+
     if eia is not None and "Entity Name" in eia.columns:
         j = op.merge(eia[["EIA Plant ID", "Entity Name"]].drop_duplicates("EIA Plant ID"),
                      on="EIA Plant ID", how="left")
@@ -106,9 +124,10 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
         out["_owner_map"] = dict(zip(j["Generator ID"], j["Entity Name"]))
     return out
 
-DEFAULT_WEIGHTS = {"dev_distress": 4, "contract_cliff": 3, "underperf": 3, "ix_burden": 2.5,
-                   "red_zone": 2.5, "qf_rollup": 2, "retirement": 2, "late_stage": 1.5,
-                   "county_risk": -1}
+DEFAULT_WEIGHTS = {"dev_distress": 4, "duke_withdrawn_match": 3.5, "contract_cliff": 3,
+                   "underperf": 3, "ix_burden": 2.5, "red_zone": 2.5, "qf_rollup": 2,
+                   "retirement": 2, "late_stage": 1.5, "withdrawal_cluster": 1,
+                   "warn_county": 0.5, "county_risk": -1}
 WEIGHTS = DEFAULT_WEIGHTS  # retro-compatibilidad
 
 def composite_score(g, screens, weights=None, threshold=0.0):

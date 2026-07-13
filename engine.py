@@ -106,13 +106,15 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
         out["_owner_map"] = dict(zip(j["Generator ID"], j["Entity Name"]))
     return out
 
-WEIGHTS = {"dev_distress": 4, "contract_cliff": 3, "underperf": 3, "ix_burden": 2.5,
-           "red_zone": 2.5, "qf_rollup": 2, "retirement": 2, "late_stage": 1.5,
-           "county_risk": -1}   # county risk SUBTRACTS (it's a caution flag)
+DEFAULT_WEIGHTS = {"dev_distress": 4, "contract_cliff": 3, "underperf": 3, "ix_burden": 2.5,
+                   "red_zone": 2.5, "qf_rollup": 2, "retirement": 2, "late_stage": 1.5,
+                   "county_risk": -1}
+WEIGHTS = DEFAULT_WEIGHTS  # retro-compatibilidad
 
-def composite_score(g, screens):
+def composite_score(g, screens, weights=None, threshold=0.0):
+    W = {**DEFAULT_WEIGHTS, **(weights or {})}
     s = pd.Series(0.0, index=g["Generator ID"]); reasons = {}; fired = {}
-    for key, w in WEIGHTS.items():
+    for key, w in W.items():
         d = screens.get(key)
         if d is None or d.empty or "Generator ID" not in d.columns: continue
         for gid, r in zip(d["Generator ID"], d["Reason"]):
@@ -123,8 +125,8 @@ def composite_score(g, screens):
     top["Opportunity Score"] = s
     top["Why"] = top.index.map(lambda i: " | ".join(reasons.get(i, [])))
     top["_fired"] = top.index.map(lambda i: fired.get(i, []))
-    top = top[top["Opportunity Score"] > 0].sort_values("Opportunity Score", ascending=False)
-    return top.reset_index()
+    top = top[top["Opportunity Score"] >= max(threshold, 1e-9)]
+    return top.sort_values("Opportunity Score", ascending=False).reset_index()
 
 def build_playbook_context(row, screens, dq, restrictions, contested):
     """Assemble the ctx dict actions.generate_playbook needs, for one row."""

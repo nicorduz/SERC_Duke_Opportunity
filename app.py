@@ -350,15 +350,15 @@ with tabs[2]:
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
     mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
     rz_ids = set(scr["red_zone"]["Generator ID"])
-    mm["Categoría"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9), "Oportunidad", "Sin señal")
-    if c3.toggle("Resaltar zona roja (POI restringido)"):
-        mm.loc[mm["Generator ID"].isin(rz_ids) & (mm["Categoría"] == "Oportunidad"),
-               "Categoría"] = "Oportunidad en ZONA ROJA"
-    if only_opp: mm = mm[mm["Categoría"] != "Sin señal"]
+    mm["Categoría"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9), "Opportunity", "No Signal")
+    if c3.toggle("POI Congested)"):
+        mm.loc[mm["Generator ID"].isin(rz_ids) & (mm["Category"] == "Opportunity"),
+               "Category"] = "Opportunity on POI Congested"
+    if only_opp: mm = mm[mm["Category"] != "No Signal"]
     fig = px.scatter_mapbox(mm, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
-                            size="Capacity (MW)", color="Categoría",
-                            color_discrete_map={"Sin señal": "#C7C4D9", "Oportunidad": INDIGO,
-                                                "Oportunidad en ZONA ROJA": GOLD},
+                            size="Capacity (MW)", color="Category",
+                            color_discrete_map={"Sin señal": "#C7C4D9", "Opportunity": INDIGO,
+                                                "Opportunity on POI Congested": GOLD},
                             hover_name="Power Project Name",
                             hover_data={"County": True, "Detailed Status": True,
                                         "Opportunity Score": ":.1f", "Capacity (MW)": ":.1f",

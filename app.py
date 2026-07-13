@@ -476,7 +476,7 @@ with tabs[6]:
             for k in DW: st.session_state[f"w_{k}"] = float(DW[k])
             st.session_state["thr"] = 0.5; st.rerun()
 
-INFO = {
+      INFO = {
       "dev_distress": ("Development distress", "Project status is Suspended, Postponed, or Moved to another cluster.",
         "A developer freezing a project it already invested in (queue deposits, studies) is the classic motivated seller: usually prefers selling the position over losing it.",
         "'Detailed Status' column of the Orennia export."),

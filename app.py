@@ -135,8 +135,10 @@ def load_all():
 
 D = load_all()
 g = D["g"]
-scr = engine.opportunity_screens(g, D.get("eia"), D.get("duke_queue"),
-                                 D.get("red_zone"), D.get("restrictions"), D.get("contested"))
+_warn = pd.concat([D[k] for k in ("warn_nc", "warn_sc") if k in D], ignore_index=True) \
+        if any(k in D for k in ("warn_nc", "warn_sc")) else None
+scr = engine.opportunity_screens(g, D.get("eia"), D.get("duke_queue"), D.get("red_zone"),
+                                 D.get("restrictions"), D.get("contested"), warn=_warn)
 DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
 THRESHOLD = st.session_state.get("thr", 0.5)
@@ -502,6 +504,15 @@ with tabs[6]:
       "county_risk": ("County risk (SUBTRACTS)", "The county has a recorded solar restriction or moratorium, or a history of disputed or cancelled projects.",
         "This is not an opportunity signal; it is a warning. Local opposition may prevent repowering or expansion. Its weight is therefore negative, reducing the score without excluding the project.",
         "Sabin Center 2025 files: Restrictions and Contested Projects, filtered for NC/SC and solar."),
+        "duke_withdrawn_match": ("Retiro confirmado por Duke", "El Queue ID del proyecto aparece con estado WITHDRAWN en el archivo oficial de cola de Duke.",
+        "Es la evidencia de distrés más dura que existe fuera de una quiebra: el propio utility registra que el desarrollador abandonó la posición tras pagar depósitos y estudios. Vendedor motivado casi seguro.",
+        "Cruce del 'Queue ID' de Orennia contra el archivo de cola de clúster de Duke (20260331_Cluster_QueueDEP.xlsx), estado = Withdrawn. Fuente 100% Duke, no Orennia."),
+      "withdrawal_cluster": ("Clúster de retiros por condado", "El condado acumula ≥50 MW retirados de la cola de Duke.",
+        "Donde muchos proyectos mueren juntos suele haber una causa común (upgrades caros, saturación). Todos los dueños de esa zona enfrentan la misma presión: entorno con múltiples vendedores potenciales. Peso bajo porque es contexto, no evidencia del proyecto específico.",
+        "Suma de MW con estado Withdrawn por condado, del archivo de cola de Duke. Fuente: Duke."),
+      "warn_county": ("WARN en el condado", "Hay un aviso WARN (despido/cierre masivo) de una empresa energía-relevante en el mismo condado.",
+        "Señal débil pero temprana de estrés del sector en la zona: un EPC o fabricante eléctrico cerrando cerca puede anticipar proyectos huérfanos. Peso mínimo: es contexto de condado, no del activo.",
+        "Portales WARN de NC Commerce y SC DEW (archivos warn_nc / warn_sc), filtrados por palabras clave de energía. Fuente: gobiernos estatales."),
     }
     with c2:
         st.markdown('<div class="sect">The 9 screens, explained</div>', unsafe_allow_html=True)

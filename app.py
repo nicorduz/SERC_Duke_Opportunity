@@ -137,7 +137,10 @@ D = load_all()
 g = D["g"]
 scr = engine.opportunity_screens(g, D.get("eia"), D.get("duke_queue"),
                                  D.get("red_zone"), D.get("restrictions"), D.get("contested"))
-top = engine.composite_score(g, scr)
+DW = engine.DEFAULT_WEIGHTS
+weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
+THRESHOLD = st.session_state.get("thr", 0.5)
+top = engine.composite_score(g, scr, weights, THRESHOLD)
 op = g[g["Is Operating"]]
 
 # ─────────────────────────────── fetchers
@@ -234,7 +237,7 @@ st.markdown(f"""
   <div class="kpi"><div class="v">{len(top)}</div><div class="l">Scored opportunities</div></div>
 </div>""", unsafe_allow_html=True)
 
-tabs = st.tabs(["Dashboard", "Targets & playbooks", "Map", "Withdrawals",
+tabs = st.tabs([ "Score & Methodology", "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
                 "Live signals", "Data & updates"])
 
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
@@ -346,12 +349,19 @@ with tabs[2]:
     mm = g[g["State"].isin(stt) & g["Technology"].isin(tech)].dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
     mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
-    if only_opp: mm = mm[mm["Opportunity Score"] > 0]
+    rz_ids = set(scr["red_zone"]["Generator ID"])
+    mm["Categoría"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9), "Oportunidad", "Sin señal")
+    if c3.toggle("Resaltar zona roja (POI restringido)"):
+        mm.loc[mm["Generator ID"].isin(rz_ids) & (mm["Categoría"] == "Oportunidad"),
+               "Categoría"] = "Oportunidad en ZONA ROJA"
+    if only_opp: mm = mm[mm["Categoría"] != "Sin señal"]
     fig = px.scatter_mapbox(mm, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
-                            size="Capacity (MW)", color="Opportunity Score",
-                            color_continuous_scale=[[0, "#D9D3F8"], [0.5, INDIGO], [1, GOLD]],
+                            size="Capacity (MW)", color="Categoría",
+                            color_discrete_map={"Sin señal": "#C7C4D9", "Oportunidad": INDIGO,
+                                                "Oportunidad en ZONA ROJA": GOLD},
                             hover_name="Power Project Name",
-                            hover_data={"County": True, "Detailed Status": True, "Capacity (MW)": ":.1f",
+                            hover_data={"County": True, "Detailed Status": True,
+                                        "Opportunity Score": ":.1f", "Capacity (MW)": ":.1f",
                                         "Latitude (Degrees)": False, "Longitude (Degrees)": False},
                             zoom=6.2, height=650)
     fig.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0),
@@ -422,3 +432,65 @@ with tabs[5]:
         f'<span class="badge b-sig" style="font-size:12.5px;padding:6px 14px">{k} — {v}</span>' for k, v in chips.items())
         + '<div class="sub" style="margin-top:8px">To refresh a static dataset: replace its file in <code>data_uploads/</code> (run parsers via <code>refresh_static.py</code>) and push to GitHub — Streamlit Cloud redeploys automatically.</div></div>',
         unsafe_allow_html=True)
+
+# ─────────────────────────────── SCORE & METHODOLOGY
+with tabs[6]:
+    st.markdown('<div class="sect">How the score is calculated</div>'
+                '<div class="sub">Weighted sum: each project passes through 9 filters ("screens"). '
+                'For every rule it meets, it adds the weight assigned to that screen. It is a simple and auditable sum: '
+                'the Why column lists exactly what contributed to the score. A project is classified as an OPPORTUNITY if its total ≥ the threshold.</div>',
+                unsafe_allow_html=True)
+    st.markdown(f'<div class="card"><b>Example:</b> a project with a PPA expiring in 3 years (+{weights["contract_cliff"]}) '
+                f'and production 25% below forecast (+{weights["underperf"]}) '
+                f'in a county with a moratorium ({weights["county_risk"]}) = score '
+                f'{weights["contract_cliff"]+weights["underperf"]+weights["county_risk"]:.1f}.</div>', unsafe_allow_html=True)
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        st.markdown('<div class="sect">Settings (recalculate everything live)</div>', unsafe_allow_html=True)
+        st.slider("Opportunity threshold (minimum score)", 0.0, 10.0, 0.5, 0.5, key="thr")
+        for k, v in DW.items():
+            st.slider(k, -3.0, 6.0, float(v), 0.5, key=f"w_{k}")
+        st.caption(f"With these values: {len(top)} opportunities out of {len(g)} generators.")
+        if st.button("Restore default values"):
+            for k in DW: st.session_state[f"w_{k}"] = float(DW[k])
+            st.session_state["thr"] = 0.5; st.rerun()
+
+    INFO = {
+      "dev_distress": ("Development distress", "The project is Suspended, Postponed, or Moved to another cluster.",
+        "A developer that stops a project after already investing in it, such as queue deposits and studies, is a classic motivated seller: it will often prefer to sell the queue position rather than lose it.",
+        "The 'Detailed Status' column from the Orennia export."),
+      "contract_cliff": ("Contract expiration (PPA)", "The energy sales contract expires in ≤5 years or has already expired.",
+        "Without a PPA, the project becomes exposed to repricing at the current, lower avoided-cost rate. The owner faces revenue uncertainty, creating an acquisition window before repricing.",
+        "The 'Contract Termination Date' and 'Contract Price' columns from Orennia."),
+      "underperf": ("Underperformance", "The capacity factor decreased by ≥1.5 percentage points compared with the previous year, OR the actual CF is <80% of Orennia's forecast for that site.",
+        "Declining production may indicate equipment degradation, failures, or curtailment. An underperforming asset owned by a party without the capital to repair it may be acquired at a discount and repowered.",
+        "Orennia's monthly actual-generation series and forward forecast from the same file."),
+      "ix_burden": ("Interconnection burden", "Allocated interconnection cost >$150/kW.",
+        "Expensive grid upgrades can destroy project economics, causing the owner to sell the queue position rather than pay the required costs. For the buyer, this provides negotiation leverage.",
+        "Orennia's 'Interconnection Cost Physical/System Upgrade' columns. Only 33 projects include this information."),
+      "red_zone": ("Duke red zone", "The point of interconnection (POI) matches a substation included in DEP's restricted-zone list.",
+        "Duke has identified these zones as constrained: connecting there may require lengthy and expensive upgrades. This is a dual signal: higher risk for new projects and scarcity value for positions that are already connected.",
+        "Text match between Orennia's 'Point of Interconnection' and Duke's DEP Red Zone file. ⚠️ Partial coverage: only approximately 236 of 1,271 generators include POI text in Orennia."),
+      "qf_rollup": ("Aging QF universe", "Operating, ≤5.5 MW, and ≥8 years old.",
+        "This is North Carolina's PURPA fleet: hundreds of small plants from the same development generation, with fragmented ownership and older contracts. Roll-up thesis: acquire multiple assets, operate them as a portfolio, and repower them.",
+        "Capacity, 'First Power Date,' and operating status from Orennia. 5.5 MW is the standard PURPA threshold in North Carolina."),
+      "retirement": ("Retirement horizon", "Estimated retirement date in ≤5 years.",
+        "A site approaching retirement retains its most valuable components: the interconnection position and the land. This creates an opportunity to reuse the site or queue position with new equipment.",
+        "The 'Estimated Retirement Date' column from Orennia."),
+      "late_stage": ("Advanced pipeline", "Under development, but not operating, with a mature stage such as an interconnection agreement, engineering, or construction.",
+        "De-risked projects are among the most sought-after assets in the current market because most development risk has already been resolved. The weight is low because this indicates attractiveness rather than distress.",
+        "Orennia's 'Detailed Status' mapped to a 0-100 maturity scale, with Dev Stage Score ≥60."),
+      "county_risk": ("County risk (SUBTRACTS)", "The county has a recorded solar restriction or moratorium, or a history of disputed or cancelled projects.",
+        "This is not an opportunity signal; it is a warning. Local opposition may prevent repowering or expansion. Its weight is therefore negative, reducing the score without excluding the project.",
+        "Sabin Center 2025 files: Restrictions and Contested Projects, filtered for NC/SC and solar."),
+    }
+    with c2:
+        st.markdown('<div class="sect">The 9 screens, explained</div>', unsafe_allow_html=True)
+        for k, (nom, que, porque, fuente) in INFO.items():
+            n = len(scr.get(k, []))
+            st.markdown(f"""<div class="card"><b style="font-family:'Space Grotesk'">{nom}</b>
+<span class="badge b-sig">weight {weights[k]:+.1f}</span><span class="badge b-sig">{n} hits</span>
+<div class="row" style="margin-top:6px"><b>What it is:</b> {que}</div>
+<div class="row"><b>Why it matters for M&A:</b> {porque}</div>
+<div class="row" style="color:#6B668F"><b>Data source:</b> {fuente}</div></div>""", unsafe_allow_html=True)

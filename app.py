@@ -237,8 +237,8 @@ st.markdown(f"""
   <div class="kpi"><div class="v">{len(top)}</div><div class="l">Scored opportunities</div></div>
 </div>""", unsafe_allow_html=True)
 
-tabs = st.tabs([ "Score & Methodology", "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
-                "Live signals", "Data & updates"])
+tabs = st.tabs([ "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
+                "Live signals", "Data & updates" , "Score & Methodology"])
 
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
        "Opportunity Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=float(top["Opportunity Score"].max() or 8), format="%.1f"),

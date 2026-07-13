@@ -95,22 +95,22 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
                 & (dq["fuel_tech"].isin(["Solar", "Battery", "Energy Storage"]))].copy()
         out["withdrawn_queue"] = wd.sort_values("mw", ascending=False)
 
-    # ── screens NO-Orennia ──
+# ── non-Orennia screens ──
     if dq is not None:
         wd_all = dq[dq["status"].str.lower() == "withdrawn"]
         wids = set(wd_all["queue_id"].astype(str).str.strip())
         m1 = g[g["Queue ID"].astype(str).str.strip().isin(wids)].copy()
-        m1["Reason"] = "Su Queue ID figura como WITHDRAWN en la cola oficial de Duke — distrés confirmado por el utility"
+        m1["Reason"] = "Queue ID appears as WITHDRAWN in Duke's official queue — utility-confirmed distress"
         out["duke_withdrawn_match"] = m1
         cw = wd_all.groupby(wd_all["county"].astype(str).str.lower())["mw"].sum()
         hot = set(cw[cw >= 50].index)
         m2 = g[g["County"].fillna("").str.lower().isin(hot)].copy()
-        m2["Reason"] = "Condado con ≥50 MW retirados de la cola de Duke — entorno rico en vendedores"
+        m2["Reason"] = "County has ≥50 MW withdrawn from Duke's queue — seller-rich environment"
         out["withdrawal_cluster"] = m2
     if warn is not None and len(warn) and "energy_relevant" in warn.columns:
         wcty = set(warn[warn["energy_relevant"] == True]["county"].astype(str).str.lower().str.strip())
         m3 = g[g["County"].fillna("").str.lower().isin(wcty)].copy()
-        m3["Reason"] = "Aviso WARN energía-relevante en el mismo condado — estrés laboral del sector cerca del activo"
+        m3["Reason"] = "Energy-relevant WARN notice in the same county — sector labor stress near the asset"
         out["warn_county"] = m3
 
     if eia is not None and "Entity Name" in eia.columns:

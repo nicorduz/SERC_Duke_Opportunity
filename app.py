@@ -513,7 +513,7 @@ INFO = {
       "county_risk": ("County risk (SUBTRACTS)", "The county has a recorded solar restriction/moratorium, or a history of contested/canceled projects.",
         "Not an opportunity — a warning. Local opposition can block repowering or expansion. Hence the negative weight: it penalizes the score without eliminating the project.",
         "Sabin Center 2025 files: Restrictions and Contested Projects, filtered to NC/SC + solar."),
-    }
+        }
     with c2:
         st.markdown('<div class="sect">The 9 screens, explained</div>', unsafe_allow_html=True)
         for k, (nom, que, porque, fuente) in INFO.items():

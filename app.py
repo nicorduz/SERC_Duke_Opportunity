@@ -158,15 +158,38 @@ NOFAR_SITES = pd.DataFrame([
     {"name": "Shalimar Farms", "lat": 36.372836, "lon": -79.624592},
     {"name": "Regency (Ravi Reddy)", "lat": 36.122692, "lon": -78.284289},
 ])
+NC_SC_COUNTY_LATLON = {
+    "robeson": (34.64, -79.10), "cumberland": (35.05, -78.83), "bladen": (34.62, -78.56),
+    "sampson": (35.02, -78.37), "duplin": (34.94, -77.93), "columbus": (34.27, -78.65),
+    "harnett": (35.37, -78.87), "johnston": (35.51, -78.36), "wayne": (35.36, -78.00),
+    "scotland": (34.84, -79.48), "richmond": (35.00, -79.75), "hoke": (35.02, -79.23),
+    "moore": (35.31, -79.48), "lee": (35.47, -79.17), "nash": (35.97, -77.99),
+    "wilson": (35.71, -77.92), "halifax": (36.25, -77.65), "northampton": (36.42, -77.40),
+    "edgecombe": (35.91, -77.60), "pitt": (35.59, -77.37), "beaufort": (35.49, -76.85),
+    "bertie": (36.06, -77.00), "hertford": (36.36, -76.98), "martin": (35.84, -77.10),
+    "greene": (35.48, -77.68), "lenoir": (35.24, -77.64), "craven": (35.12, -77.08),
+    "onslow": (34.76, -77.40), "anson": (34.97, -80.10), "union": (34.99, -80.53),
+    "stanly": (35.31, -80.25), "montgomery": (35.33, -79.90), "chatham": (35.70, -79.25),
+    "person": (36.39, -78.97), "granville": (36.30, -78.65), "warren": (36.40, -78.10),
+    "franklin": (36.08, -78.28), "vance": (36.36, -78.41), "caswell": (36.39, -79.34),
+    "rockingham": (36.39, -79.77), "guilford": (36.08, -79.79), "alamance": (36.04, -79.40),
+    # SC
+    "marlboro": (34.60, -79.68), "dillon": (34.39, -79.37), "marion": (34.08, -79.36),
+    "horry": (33.90, -78.98), "florence": (34.05, -79.70), "darlington": (34.33, -79.95),
+    "chesterfield": (34.63, -80.16), "lancaster": (34.69, -80.71), "york": (34.97, -81.19),
+    "sumter": (33.92, -80.38), "clarendon": (33.66, -80.21), "williamsburg": (33.62, -79.72),
+    "georgetown": (33.43, -79.36), "berkeley": (33.20, -79.95), "orangeburg": (33.44, -80.80),
+    "calhoun": (33.68, -80.78), "lee": (34.16, -80.25), "kershaw": (34.34, -80.59),
+}
 
 def add_nofar_layer(fig, show=True):
     if not show: return fig
     fig.add_trace(go.Scattermapbox(
         lat=NOFAR_SITES["lat"], lon=NOFAR_SITES["lon"], mode="markers+text",
-        marker=dict(size=18, color=GOLD, symbol="star"),
-        text=NOFAR_SITES["name"], textposition="top center",
-        textfont=dict(color=DEEP, size=12), name="Nofar sites",
-        hovertext="Nofar: " + NOFAR_SITES["name"], hoverinfo="text"))
+        marker=dict(size=22, color=GOLD),
+        text=["📍 " + n for n in NOFAR_SITES["name"]], textposition="top center",
+        textfont=dict(color=DEEP, size=13, family="Space Grotesk"),
+        name="Nofar sites", hovertext="⭐ Nofar: " + NOFAR_SITES["name"], hoverinfo="text"))
     return fig
 
 # ─────────────────────────────── fetchers
@@ -420,31 +443,36 @@ with tabs[3]:
     wd = scr.get("withdrawn_queue", pd.DataFrame())
     st.markdown(f'<div class="sect">Withdrawn from Duke queue — {len(wd)} solar/battery positions</div>'
                 '<div class="sub">Every row = a developer who sank deposits and walked. Sorted by MW; group by county to find stress clusters.</div>', unsafe_allow_html=True)
-    wmap = wd.merge(g[["Queue ID", "Latitude (Degrees)", "Longitude (Degrees)", "Power Project Name"]],
-                    left_on=wd["queue_id"].astype(str).str.strip(),
-                    right_on=g["Queue ID"].astype(str).str.strip(), how="left").dropna(subset=["Latitude (Degrees)"])
-    if len(wmap):
-        st.markdown(f'<div class="sub">{len(wmap)} of {len(wd)} withdrawals matched to Orennia coordinates (rest lack lat/lon).</div>', unsafe_allow_html=True)
-        wf = px.scatter_mapbox(wmap, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
-                               size="mw", hover_name="Power Project Name",
-                               hover_data={"mw": ":.1f", "county": True},
-                               color_discrete_sequence=["#B3261E"], zoom=6, height=420)
-        wf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0))
+    # ── Withdrawals por condado (agregado) ──
+    wc = wd.copy()
+    wc["cty"] = wc["county"].astype(str).str.lower().str.replace(" county", "", regex=False).str.strip()
+    agg = wc.groupby("cty").agg(withdrawals=("queue_id", "count"),
+                                 mw=("mw", "sum")).reset_index()
+    agg["lat"] = agg["cty"].map(lambda c: NC_SC_COUNTY_LATLON.get(c, (None, None))[0])
+    agg["lon"] = agg["cty"].map(lambda c: NC_SC_COUNTY_LATLON.get(c, (None, None))[1])
+    mapped = agg.dropna(subset=["lat", "lon"])
+    st.markdown(f'<div class="sub">{mapped["withdrawals"].sum()} withdrawals shown across {len(mapped)} counties '
+                f'({agg["withdrawals"].sum() - mapped["withdrawals"].sum()} in counties without a mapped centroid — see list below).</div>',
+                unsafe_allow_html=True)
+    if len(mapped):
+        wf = px.scatter_mapbox(mapped, lat="lat", lon="lon", size="withdrawals",
+                               color="withdrawals", color_continuous_scale=[[0, "#F6C9C4"], [1, "#B3261E"]],
+                               size_max=45, hover_name="cty",
+                               hover_data={"withdrawals": True, "mw": ":.0f", "lat": False, "lon": False},
+                               text="withdrawals", zoom=6, height=460)
+        wf.update_traces(textfont=dict(size=14, color="white", family="Space Grotesk"))
+        wf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0),
+                         coloraxis_colorbar_title="Withdrawals")
         wf = add_nofar_layer(wf, True)
         st.plotly_chart(wf, use_container_width=True, config={"displayModeBar": False})
-    else:
-        st.info("No withdrawals matched Orennia coordinates by Queue ID — see county chart below.")
-    a, b = st.columns([3, 2])
-    with a:
-        st.dataframe(wd[["utility", "queue_id", "cluster_cycle", "fuel_tech", "mw", "county", "state", "queue_date"]],
-                     use_container_width=True, height=520, hide_index=True)
-    with b:
-        byc = wd.groupby("county")["mw"].sum().sort_values(ascending=False).head(15).reset_index()
-        f = px.bar(byc, x="mw", y="county", orientation="h", color_discrete_sequence=[INDIGO])
-        f.update_layout(height=520, margin=dict(l=0, r=10, t=4, b=0), plot_bgcolor="white",
-                        font_family="Inter", xaxis_title="Withdrawn MW", yaxis_title=None,
-                        yaxis=dict(autorange="reversed"))
-        st.plotly_chart(f, use_container_width=True, config={"displayModeBar": False})
+
+    # ── Lista expandible por condado ──
+    st.markdown('<div class="sect" style="margin-top:12px">Withdrawals by county — click to expand</div>', unsafe_allow_html=True)
+    for cty in agg.sort_values("withdrawals", ascending=False)["cty"]:
+        rows = wc[wc["cty"] == cty]
+        with st.expander(f"{cty.title()} County — {len(rows)} withdrawals · {rows['mw'].sum():.0f} MW"):
+            st.dataframe(rows[["queue_id", "cluster_cycle", "fuel_tech", "mw", "state", "queue_date"]],
+                         use_container_width=True, hide_index=True)
 
 # ─────────────────────────────── ACTION QUEUE
 with tabs[7]:

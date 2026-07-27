@@ -455,14 +455,20 @@ with tabs[3]:
                 f'({agg["withdrawals"].sum() - mapped["withdrawals"].sum()} in counties without a mapped centroid — see list below).</div>',
                 unsafe_allow_html=True)
     if len(mapped):
-        wf = px.scatter_mapbox(mapped, lat="lat", lon="lon", size="withdrawals",
-                               color="withdrawals", color_continuous_scale=[[0, "#F6C9C4"], [1, "#B3261E"]],
-                               size_max=45, hover_name="cty",
+        mapped = mapped.dropna(subset=["withdrawals"]).copy()
+        mapped["withdrawals"] = mapped["withdrawals"].astype(int)
+        wf = px.scatter_mapbox(mapped, lat="lat", lon="lon",
+                               size="withdrawals", color="withdrawals",
+                               color_continuous_scale=[[0, "#F6C9C4"], [1, "#B3261E"]],
+                               size_max=55, hover_name="cty",
                                hover_data={"withdrawals": True, "mw": ":.0f", "lat": False, "lon": False},
-                               text="withdrawals", zoom=6, height=460)
-        wf.update_traces(textfont=dict(size=14, color="white", family="Space Grotesk"))
+                               text="withdrawals", zoom=6.3, height=620,
+                               center={"lat": 35.2, "lon": -79.2})
+        wf.update_traces(textfont=dict(size=15, color="white", family="Space Grotesk"),
+                         marker=dict(sizemin=12), textposition="middle center")
         wf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0),
-                         coloraxis_colorbar_title="Withdrawals")
+                         coloraxis_colorbar_title="Withdrawals",
+                         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01))
         wf = add_nofar_layer(wf, True)
         st.plotly_chart(wf, use_container_width=True, config={"displayModeBar": False})
 

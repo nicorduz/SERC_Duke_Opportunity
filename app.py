@@ -11,11 +11,11 @@ import distress_scan, web_signals
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
-import json, urllib.request    @st.cache_data(show_spinner=False)
-    def load_counties():
-        url = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
-        with urllib.request.urlopen(url) as r:
-            return json.load(r)
+@st.cache_data(show_spinner=False)
+def load_counties():
+    import json, urllib.request
+    with urllib.request.urlopen(...) as r:
+        return json.load(r)
 
     # FIPS de estado: NC=37, SC=45. Necesitamos county FIPS por nombre.
     NC_SC_FIPS = {

@@ -1,5 +1,4 @@
-"""web_signals.py — targeted distress search via Google News RSS (free, no key, no login).
-NOT LinkedIn (blocked). Queries each NC/SC company against stress keywords."""
+"""web_signals.py — targeted distress search via Google News RSS (free, no key, no login)."""
 import pandas as pd, urllib.parse, feedparser, time
 
 STRESS = ['layoffs', 'job cuts', 'bankruptcy', 'cancels solar', 'terminates PPA',
@@ -9,10 +8,8 @@ def _companies_from(g, ownership=None, extra=None):
     names = set()
     if ownership is not None and "current_owner" in ownership:
         names |= set(ownership["current_owner"].dropna().tolist())
-    # project names as fallback universe
     names |= set(g["Power Project Name"].dropna().tolist())
     if extra: names |= set(extra)
-    # keep company-like names (drop pure "Duke:..." internal ids)
     return [n for n in names if isinstance(n, str) and len(n) > 4 and ":" not in n][:40]
 
 def scan_web_signals(g, ownership=None, max_companies=25):
@@ -32,5 +29,5 @@ def scan_web_signals(g, ownership=None, max_companies=25):
                              "link": e.get("link", "")})
         except Exception:
             pass
-        time.sleep(0.3)  # be gentle
+        time.sleep(0.3)
     return pd.DataFrame(rows)

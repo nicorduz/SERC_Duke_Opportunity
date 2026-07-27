@@ -492,18 +492,10 @@ with tabs[2]:
 with tabs[3]:
     wd = scr.get("withdrawn_queue", pd.DataFrame())
     st.markdown(f'<div class="sect">Withdrawn from Duke queue — {len(wd)} solar/battery positions</div>'
-                '<div class="sub">Every row = a developer who sank deposits and walked. Sorted by MW; group by county to find stress clusters.</div>', unsafe_allow_html=True)
-    # ── Withdrawals por condado (agregado) ──
-    import json, urllib.request
-    @st.cache_data(show_spinner=False)
-    def load_counties():
-        url = "https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json"
-        with urllib.request.urlopen(url) as r:
-            return json.load(r)
+                '<div class="sub">Every row = a developer who sank deposits and walked. Color = # withdrawals per county.</div>',
+                unsafe_allow_html=True)
 
-    # FIPS de estado: NC=37, SC=45. Necesitamos county FIPS por nombre.
     NC_SC_FIPS = {
-        # NC
         "robeson":"37155","cumberland":"37051","bladen":"37017","sampson":"37163","duplin":"37061",
         "columbus":"37047","harnett":"37085","johnston":"37101","wayne":"37191","scotland":"37165",
         "richmond":"37153","hoke":"37093","moore":"37125","lee":"37105","nash":"37127","wilson":"37195",
@@ -513,46 +505,52 @@ with tabs[3]:
         "montgomery":"37123","chatham":"37037","person":"37145","granville":"37077","warren":"37185",
         "franklin":"37069","vance":"37181","caswell":"37033","rockingham":"37157","guilford":"37081",
         "alamance":"37001",
-        # SC
         "marlboro":"45069","dillon":"45033","marion":"45067","horry":"45051","florence":"45041",
         "darlington":"45031","chesterfield":"45025","lancaster":"45057","york":"45091","sumter":"45085",
         "clarendon":"45027","williamsburg":"45089","georgetown":"45043","berkeley":"45015",
         "orangeburg":"45075","kershaw":"45055",
     }
-    wc = wd.copy()
-    wc["cty"] = wc["county"].astype(str).str.lower().str.replace(" county","",regex=False).str.strip()
-    agg = wc.groupby("cty").agg(withdrawals=("queue_id","count"), mw=("mw","sum")).reset_index()
-    agg["fips"] = agg["cty"].map(NC_SC_FIPS)
-    mapped = agg.dropna(subset=["fips"])
-    st.markdown(f'<div class="sub">{int(mapped["withdrawals"].sum())} withdrawals across {len(mapped)} counties '
-                f'(color = # withdrawals). Counties without a shape are in the list below.</div>', unsafe_allow_html=True)
 
-    if len(mapped):
-        geo = load_counties()
-        fig_w = px.choropleth_mapbox(
-            mapped, geojson=geo, locations="fips", color="withdrawals",
-            color_continuous_scale=["#F6C9C4", "#E88A82", "#B3261E", "#7A140F"],
-            range_color=(1, mapped["withdrawals"].max()),
-            mapbox_style="open-street-map", zoom=6.1, center={"lat":35.2,"lon":-79.2},
-            opacity=0.75, height=640,
-            hover_name="cty",
-            hover_data={"withdrawals":True, "mw":":.0f", "fips":False})
-        # sitios Nofar como capa de texto grande
-        fig_w.add_scattermapbox(
-            lat=NOFAR_SITES["lat"], lon=NOFAR_SITES["lon"], mode="markers+text",
-            marker=dict(size=20, color=GOLD), text=["★ "+n for n in NOFAR_SITES["name"]],
-            textposition="top center", textfont=dict(color=DEEP, size=13),
-            name="Nofar sites", hoverinfo="text")
-        fig_w.update_layout(margin=dict(l=0,r=0,t=0,b=0), coloraxis_colorbar_title="Withdrawals")
-        st.plotly_chart(fig_w, use_container_width=True, config={"displayModeBar": False})
+    @st.cache_data(show_spinner=False)
+    def load_counties():
+        import json, urllib.request
+        with urllib.request.urlopen("https://raw.githubusercontent.com/plotly/datasets/master/geojson-counties-fips.json") as r:
+            return json.load(r)
 
-    # ── Lista expandible por condado ──
-    st.markdown('<div class="sect" style="margin-top:12px">Withdrawals by county — click to expand</div>', unsafe_allow_html=True)
-    for cty in agg.sort_values("withdrawals", ascending=False)["cty"]:
-        rows = wc[wc["cty"] == cty]
-        with st.expander(f"{cty.title()} County — {len(rows)} withdrawals · {rows['mw'].sum():.0f} MW"):
-            st.dataframe(rows[["queue_id", "cluster_cycle", "fuel_tech", "mw", "state", "queue_date"]],
-                         use_container_width=True, hide_index=True)
+    if len(wd):
+        wc = wd.copy()
+        wc["cty"] = wc["county"].astype(str).str.lower().str.replace(" county","",regex=False).str.strip()
+        agg = wc.groupby("cty").agg(withdrawals=("queue_id","count"), mw=("mw","sum")).reset_index()
+        agg["fips"] = agg["cty"].map(NC_SC_FIPS)
+        mapped = agg.dropna(subset=["fips"])
+        st.markdown(f'<div class="sub">{int(mapped["withdrawals"].sum())} withdrawals across {len(mapped)} counties. '
+                    f'Counties without a shape are in the list below.</div>', unsafe_allow_html=True)
+
+        if len(mapped):
+            geo = load_counties()
+            fig_w = px.choropleth_mapbox(
+                mapped, geojson=geo, locations="fips", color="withdrawals",
+                color_continuous_scale=["#F6C9C4", "#E88A82", "#B3261E", "#7A140F"],
+                range_color=(1, int(mapped["withdrawals"].max())),
+                mapbox_style="open-street-map", zoom=6.1, center={"lat":35.2,"lon":-79.2},
+                opacity=0.75, height=640, hover_name="cty",
+                hover_data={"withdrawals":True, "mw":":.0f", "fips":False})
+            fig_w.add_scattermapbox(
+                lat=NOFAR_SITES["lat"], lon=NOFAR_SITES["lon"], mode="markers+text",
+                marker=dict(size=20, color=GOLD), text=["★ "+n for n in NOFAR_SITES["name"]],
+                textposition="top center", textfont=dict(color=DEEP, size=13),
+                name="Nofar sites", hoverinfo="text")
+            fig_w.update_layout(margin=dict(l=0,r=0,t=0,b=0), coloraxis_colorbar_title="Withdrawals")
+            st.plotly_chart(fig_w, use_container_width=True, config={"displayModeBar": False})
+
+        st.markdown('<div class="sect" style="margin-top:12px">Withdrawals by county — click to expand</div>', unsafe_allow_html=True)
+        for cty in agg.sort_values("withdrawals", ascending=False)["cty"]:
+            rows = wc[wc["cty"] == cty]
+            with st.expander(f"{cty.title()} County — {len(rows)} withdrawals · {rows['mw'].sum():.0f} MW"):
+                st.dataframe(rows[["queue_id","cluster_cycle","fuel_tech","mw","state","queue_date"]],
+                             use_container_width=True, hide_index=True)
+    else:
+        st.info("No withdrawals found in the Duke queue file.")
 
 # ─────────────────────────────── ACTION QUEUE
 with tabs[7]:

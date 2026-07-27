@@ -393,6 +393,19 @@ with tabs[3]:
     wd = scr.get("withdrawn_queue", pd.DataFrame())
     st.markdown(f'<div class="sect">Withdrawn from Duke queue — {len(wd)} solar/battery positions</div>'
                 '<div class="sub">Every row = a developer who sank deposits and walked. Sorted by MW; group by county to find stress clusters.</div>', unsafe_allow_html=True)
+    wmap = wd.merge(g[["Queue ID", "Latitude (Degrees)", "Longitude (Degrees)", "Power Project Name"]],
+                    left_on=wd["queue_id"].astype(str).str.strip(),
+                    right_on=g["Queue ID"].astype(str).str.strip(), how="left").dropna(subset=["Latitude (Degrees)"])
+    if len(wmap):
+        st.markdown(f'<div class="sub">{len(wmap)} of {len(wd)} withdrawals matched to Orennia coordinates (rest lack lat/lon).</div>', unsafe_allow_html=True)
+        wf = px.scatter_mapbox(wmap, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
+                               size="mw", hover_name="Power Project Name",
+                               hover_data={"mw": ":.1f", "county": True},
+                               color_discrete_sequence=["#B3261E"], zoom=6, height=420)
+        wf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0))
+        st.plotly_chart(wf, use_container_width=True, config={"displayModeBar": False})
+    else:
+        st.info("No withdrawals matched Orennia coordinates by Queue ID — see county chart below.")
     a, b = st.columns([3, 2])
     with a:
         st.dataframe(wd[["utility", "queue_id", "cluster_cycle", "fuel_tech", "mw", "county", "state", "queue_date"]],

@@ -373,6 +373,7 @@ with tabs[2]:
     stt = c1.multiselect("State ", ["NC", "SC"], default=["NC", "SC"])
     tech = c2.multiselect("Technology", sorted(g["Technology"].unique()), default=sorted(g["Technology"].unique()))
     only_opp = c3.toggle("Opportunities only", value=False)
+    show_nofar = st.toggle("Show Nofar sites", value=True)
     mm = g[g["State"].isin(stt) & g["Technology"].isin(tech)].dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
     mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
@@ -411,6 +412,7 @@ with tabs[2]:
     )
     fig.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0),
                       font_family="Inter", coloraxis_colorbar_title="Score")
+    fig = add_nofar_layer(fig, show_nofar)
     st.plotly_chart(fig, use_container_width=True)
 
 # ─────────────────────────────── WITHDRAWALS

@@ -4,7 +4,6 @@ from difflib import SequenceMatcher
 
 def _sim(a, b): return SequenceMatcher(None, str(a).lower(), str(b).lower()).ratio()
 
-# ── OWNERSHIP: join Orennia projects to EIA-860M owner (fuzzy on plant name) ──
 def build_ownership(g, eia):
     rows = []
     if eia is not None and "Entity Name" in eia.columns:
@@ -24,7 +23,8 @@ def build_ownership(g, eia):
                          "current_owner": owner, "owner_match_confidence": conf, "ownership_source": src,
                          "sold_last_5yr": np.nan, "prior_owner": None, "acquired_date": None})
     own = pd.DataFrame(rows)
-    # never_resold + PPA expiring flag (uses derived cols already on g)
+    if own.empty:
+        return own
     exp = g.set_index("Generator ID")["Yrs to Contract End"]
     own["never_resold_ppa_expiring"] = own["project_id"].map(
         lambda i: bool(pd.notna(exp.get(i)) and exp.get(i) <= 5))
@@ -34,26 +34,21 @@ SIG_W = {"bankruptcy": 3, "queue_withdrawal": 2, "layoff": 2, "ppa_cancelled": 3
 
 def build_distress(g, scr, dq, warn, media=None, courtlistener=None):
     sig = []
-    proj = g[["Generator ID", "Power Project Name", "County", "State", "Capacity (MW)"]]
-    # queue_withdrawal (>30 MW) from Duke file
     if dq is not None:
         wd = dq[(dq["status"].str.lower() == "withdrawn") & (dq["mw"] > 30)]
         for _, r in wd.iterrows():
             sig.append({"company": r.get("queue_id"), "signal_type": "queue_withdrawal",
                         "signal_date": r.get("queue_date"), "source": "Duke queue",
                         "severity": 2, "county": r.get("county"), "mw": r.get("mw"), "url": ""})
-    # underperformance from existing screen
     for _, r in scr.get("underperf", pd.DataFrame()).iterrows():
         sig.append({"company": r["Power Project Name"], "signal_type": "underperformance",
                     "signal_date": None, "source": "Orennia CF", "severity": 1,
                     "county": r.get("County"), "mw": r.get("Capacity (MW)"), "url": ""})
-    # layoff from WARN (energy-relevant only), tied to county
     if warn is not None and "energy_relevant" in warn.columns:
         for _, r in warn[warn["energy_relevant"] == True].iterrows():
             sig.append({"company": r.get("company"), "signal_type": "layoff",
                         "signal_date": r.get("notice_date"), "source": f"WARN {r.get('state')}",
                         "severity": 2, "county": r.get("county"), "mw": np.nan, "url": r.get("link", "")})
-    # ppa_cancelled / bankruptcy keyword scan over already-loaded feeds
     KW = {"ppa_cancelled": ["cancel", "terminat", "write-off", "write off", "scrapp"],
           "bankruptcy": ["bankrupt", "chapter 11", "chapter 7", "receivership"]}
     for feed, fsrc in [(media, "media"), (courtlistener, "courtlistener")]:
@@ -68,8 +63,7 @@ def build_distress(g, scr, dq, warn, media=None, courtlistener=None):
     df = pd.DataFrame(sig)
     if df.empty: return df, pd.DataFrame()
     df["signal_date"] = pd.to_datetime(df["signal_date"], errors="coerce")
-    df = df.drop_duplicates(subset=["company", "signal_type"])  # dedupe
-    # decay-weighted company distress_score
+    df = df.drop_duplicates(subset=["company", "signal_type"])
     today = pd.Timestamp.today()
     df["age_days"] = (today - df["signal_date"]).dt.days.fillna(180)
     df["decay"] = np.exp(-df["age_days"] / 365.0)

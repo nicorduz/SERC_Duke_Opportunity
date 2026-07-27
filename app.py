@@ -148,7 +148,7 @@ media_df = pd.read_parquet(f"{DATA}/media.parquet") if os.path.exists(f"{DATA}/m
 cl_df = pd.read_parquet(f"{DATA}/courtlistener.parquet") if os.path.exists(f"{DATA}/courtlistener.parquet") else None
 ownership = distress_scan.build_ownership(g, D.get("eia"))
 dsig, dcomp = distress_scan.build_distress(g, scr, D.get("duke_queue"), _warn, media_df, cl_df)
-own_by_id = ownership.set_index("project_id").to_dict("index")
+own_by_id = ownership.set_index("project_id").to_dict("index") if "project_id" in ownership.columns else {}
 op = g[g["Is Operating"]]
 NOFAR_SITES = pd.DataFrame([
     {"name": "NYE",            "lat": 34.620000, "lon": -79.029836},

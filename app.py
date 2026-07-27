@@ -510,14 +510,6 @@ with tabs[4]:
     else:
         st.info("Run 'Scan web' in Data & updates to populate company stress signals.")
 
-<span class="badge b-sig">{src}</span> <span class="sub">{meta}</span><br>
-<a href="{r.get('link','')}" target="_blank" style="color:{INK};font-weight:600;text-decoration:none">{title}</a></div>""",
-                        unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-    with c1: st.markdown('<div class="sect">Media</div>', unsafe_allow_html=True); cardlist(f"{DATA}/media.parquet", "Trade media")
-    with c2: st.markdown('<div class="sect">Bankruptcies</div>', unsafe_allow_html=True); cardlist(f"{DATA}/courtlistener.parquet", "CourtListener")
-    with c3: st.markdown('<div class="sect">FERC filings</div>', unsafe_allow_html=True); cardlist(f"{DATA}/ferc.parquet", "FERC eLibrary")
-
 # ─────────────────────────────── DATA & UPDATES
 with tabs[5]:
     st.markdown('<div class="sect">Live sources — one-click update</div><div class="sub">These fetch from the internet now. Everything else below is static by design (refresh by committing new files to the repo).</div>', unsafe_allow_html=True)

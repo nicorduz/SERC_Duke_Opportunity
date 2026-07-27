@@ -291,7 +291,6 @@ with tabs[0]:
                           font_family="Inter", xaxis_title=None, yaxis_title=None)
         fig.update_traces(marker_line_width=0)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-        fig = add_nofar_layer(fig, show_nofar)
 
         cc = g.dropna(subset=["Contract Termination Date"]).copy()
         cc["yr"] = pd.to_datetime(cc["Contract Termination Date"]).dt.year

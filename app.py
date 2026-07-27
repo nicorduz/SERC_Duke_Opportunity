@@ -7,6 +7,7 @@ import pandas as pd
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import distress_scan, web_signals
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
@@ -143,7 +144,30 @@ DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
 THRESHOLD = st.session_state.get("thr", 0.5)
 top = engine.composite_score(g, scr, weights, THRESHOLD)
+media_df = pd.read_parquet(f"{DATA}/media.parquet") if os.path.exists(f"{DATA}/media.parquet") else None
+cl_df = pd.read_parquet(f"{DATA}/courtlistener.parquet") if os.path.exists(f"{DATA}/courtlistener.parquet") else None
+ownership = distress_scan.build_ownership(g, D.get("eia"))
+dsig, dcomp = distress_scan.build_distress(g, scr, D.get("duke_queue"), _warn, media_df, cl_df)
+own_by_id = ownership.set_index("project_id").to_dict("index")
 op = g[g["Is Operating"]]
+NOFAR_SITES = pd.DataFrame([
+    {"name": "NYE",            "lat": 34.620000, "lon": -79.029836},
+    {"name": "Lewis",          "lat": 34.853336, "lon": -79.161383},
+    {"name": "Gardner",        "lat": 35.032947, "lon": -78.825672},
+    {"name": "Hatcher",        "lat": 34.831122, "lon": -77.976219},
+    {"name": "Shalimar Farms", "lat": 36.372836, "lon": -79.624592},
+    {"name": "Regency (Ravi Reddy)", "lat": 36.122692, "lon": -78.284289},
+])
+
+def add_nofar_layer(fig, show=True):
+    if not show: return fig
+    fig.add_trace(go.Scattermapbox(
+        lat=NOFAR_SITES["lat"], lon=NOFAR_SITES["lon"], mode="markers+text",
+        marker=dict(size=18, color=GOLD, symbol="star"),
+        text=NOFAR_SITES["name"], textposition="top center",
+        textfont=dict(color=DEEP, size=12), name="Nofar sites",
+        hovertext="Nofar: " + NOFAR_SITES["name"], hoverinfo="text"))
+    return fig
 
 # ─────────────────────────────── fetchers
 def fetch_media():
@@ -240,7 +264,7 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 tabs = st.tabs([ "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
-                "Live signals", "Data & updates" , "Score & Methodology"])
+                "Live signals", "Data & updates" , "Score & Methodology", "Action Queue"])
 
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
        "Opportunity Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=float(top["Opportunity Score"].max() or 8), format="%.1f"),
@@ -267,6 +291,7 @@ with tabs[0]:
                           font_family="Inter", xaxis_title=None, yaxis_title=None)
         fig.update_traces(marker_line_width=0)
         st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+        fig = add_nofar_layer(fig, show_nofar)
 
         cc = g.dropna(subset=["Contract Termination Date"]).copy()
         cc["yr"] = pd.to_datetime(cc["Contract Termination Date"]).dt.year
@@ -319,6 +344,7 @@ with tabs[1]:
                                    lat="lat", lon="lon", size="mw", hover_name="n",
                                    color_discrete_sequence=[INDIGO], zoom=9, height=230)
             mf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
+            mf = add_nofar_layer(mf, True)
             st.plotly_chart(mf, use_container_width=True, config={"displayModeBar": False})
         mo = D["m"][D["m"]["Generator ID"] == sel].sort_values("Date").tail(36)
         if len(mo) > 3:
@@ -403,6 +429,7 @@ with tabs[3]:
                                hover_data={"mw": ":.1f", "county": True},
                                color_discrete_sequence=["#B3261E"], zoom=6, height=420)
         wf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0))
+        wf = add_nofar_layer(wf, True)
         st.plotly_chart(wf, use_container_width=True, config={"displayModeBar": False})
     else:
         st.info("No withdrawals matched Orennia coordinates by Queue ID — see county chart below.")
@@ -418,6 +445,38 @@ with tabs[3]:
                         yaxis=dict(autorange="reversed"))
         st.plotly_chart(f, use_container_width=True, config={"displayModeBar": False})
 
+# ─────────────────────────────── ACTION QUEUE
+with tabs[7]:
+    st.markdown('<div class="sect">Action Queue</div>'
+                '<div class="sub">Only projects above threshold, each with a recommended action, '
+                'the signals that fired it, and the source link to verify before contacting.</div>',
+                unsafe_allow_html=True)
+    aq = top.copy()
+    aq["Owner"] = aq["Generator ID"].map(lambda i: (own_by_id.get(i) or {}).get("current_owner") or "—")
+    aq["Recommended action"] = aq.apply(lambda r: distress_scan.recommend_action(
+        r["_fired"], own_by_id.get(r["Generator ID"]),
+        dsig[dsig["company"] == r["Power Project Name"]]["signal_type"].tolist() if len(dsig) else []), axis=1)
+    aq["Source"] = aq["Power Project Name"].map(
+        lambda n: (dsig[dsig["company"] == n]["url"].iloc[0]
+                   if len(dsig) and (dsig["company"] == n).any()
+                   and dsig[dsig["company"] == n]["url"].iloc[0] else ""))
+    show = aq[["Power Project Name", "Owner", "County", "State", "Capacity (MW)",
+               "Opportunity Score", "Recommended action", "Source", "Why"]]
+    st.dataframe(show, use_container_width=True, height=460, hide_index=True,
+                 column_config={**FMT, "Source": st.column_config.LinkColumn("Source")})
+
+    st.markdown('<div class="sect" style="margin-top:14px">Company distress ranking</div>'
+                '<div class="sub">Decay-weighted sum of active signals per company (recent = heavier).</div>',
+                unsafe_allow_html=True)
+    if len(dcomp):
+        st.dataframe(dcomp, use_container_width=True, hide_index=True)
+    else:
+        st.info("No distress signals yet — run the live updates (media, CourtListener) in Data & updates.")
+
+    st.download_button("⬇️ Action Queue CSV", show.to_csv(index=False),
+                       file_name="action_queue.csv", mime="text/csv")
+
+
 # ─────────────────────────────── SIGNALS
 with tabs[4]:
     def cardlist(path, kind):
@@ -429,6 +488,28 @@ with tabs[4]:
             meta = r.get("published", r.get("filed", "")) or ""
             src = r.get("source", r.get("court", r.get("query", "")))
             st.markdown(f"""<div class="card" style="padding:12px 18px">
+<span class="badge b-sig">{src}</span> <span class="sub">{meta}</span><br>
+<a href="{r.get('link','')}" target="_blank" style="color:{INK};font-weight:600;text-decoration:none">{title}</a></div>""",
+                        unsafe_allow_html=True)
+
+    c1, c2, c3 = st.columns(3)
+    with c1: st.markdown('<div class="sect">Media</div>', unsafe_allow_html=True); cardlist(f"{DATA}/media.parquet", "Trade media")
+    with c2: st.markdown('<div class="sect">Bankruptcies</div>', unsafe_allow_html=True); cardlist(f"{DATA}/courtlistener.parquet", "CourtListener")
+    with c3: st.markdown('<div class="sect">FERC filings</div>', unsafe_allow_html=True); cardlist(f"{DATA}/ferc.parquet", "FERC eLibrary")
+
+    st.markdown('<div class="sect" style="margin-top:16px">Company stress (web search)</div>'
+                '<div class="sub">Google News hits per NC/SC company. Verify each before acting — headlines ≠ confirmation.</div>', unsafe_allow_html=True)
+    if os.path.exists(f"{DATA}/web_signals.parquet"):
+        ws = pd.read_parquet(f"{DATA}/web_signals.parquet")
+        for _, r in ws.head(20).iterrows():
+            st.markdown(f"""<div class="card" style="padding:12px 18px">
+<span class="badge b-warn">{r['signal_type']}</span><span class="badge b-sig">{r['company']}</span>
+<span class="sub">{r['published']}</span><br>
+<a href="{r['link']}" target="_blank" style="color:{INK};font-weight:600;text-decoration:none">{r['title']}</a></div>""",
+                        unsafe_allow_html=True)
+    else:
+        st.info("Run 'Scan web' in Data & updates to populate company stress signals.")
+
 <span class="badge b-sig">{src}</span> <span class="sub">{meta}</span><br>
 <a href="{r.get('link','')}" target="_blank" style="color:{INK};font-weight:600;text-decoration:none">{title}</a></div>""",
                         unsafe_allow_html=True)
@@ -454,6 +535,11 @@ with tabs[5]:
     if st.button("Update all four", type="primary"):
         with st.spinner("Fetching all live sources..."):
             fetch_media(); fetch_ferc(); fetch_courtlistener(); fetch_eia860m()
+        st.cache_data.clear(); st.rerun()
+    if st.button("🔎 Scan web (Google News)"):
+        with st.spinner("Searching news for NC/SC company stress..."):
+            ws = web_signals.scan_web_signals(g, ownership)
+            ws.to_parquet(f"{DATA}/web_signals.parquet", index=False)
         st.cache_data.clear(); st.rerun()
 
     st.markdown('<div class="sect" style="margin-top:18px">Static datasets in this build</div>', unsafe_allow_html=True)
@@ -536,3 +622,5 @@ with tabs[6]:
 <div class="row" style="margin-top:6px"><b>What it is:</b> {que}</div>
 <div class="row"><b>Why it matters for M&A:</b> {porque}</div>
 <div class="row" style="color:#6B668F"><b>Data source:</b> {fuente}</div></div>""", unsafe_allow_html=True)
+
+

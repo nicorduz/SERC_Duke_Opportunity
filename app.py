@@ -11,6 +11,7 @@ import distress_scan, web_signals
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
+import team_hub
 @st.cache_data(show_spinner=False)
 def load_counties():
     import json, urllib.request
@@ -337,7 +338,7 @@ st.markdown(f"""
 </div>""", unsafe_allow_html=True)
 
 tabs = st.tabs([ "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
-                "Live signals", "Data & updates" , "Score & Methodology", "Action Queue"])
+                "Live signals", "Data & updates" , "Score & Methodology", "Action Queue","Team Hub"])
 
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
        "Opportunity Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=float(top["Opportunity Score"].max() or 8), format="%.1f"),
@@ -582,6 +583,10 @@ with tabs[7]:
 
     st.download_button("⬇️ Action Queue CSV", show.to_csv(index=False),
                        file_name="action_queue.csv", mime="text/csv")
+
+# ─────────────────────────────── TEAM HUB
+with tabs[8]:
+    team_hub.render({"INDIGO": INDIGO, "GOLD": GOLD, "DEEP": DEEP, "INK": INK})
 
 
 # ─────────────────────────────── SIGNALS

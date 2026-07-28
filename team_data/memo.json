@@ -1,0 +1,202 @@
+[
+ {
+  "week": "Week 5 \u2014 [July 21, 2026]",
+  "progress": [
+   "Built the Orennia SERC thermal-retirement file, plotting the 6 Yarotek projects against SERC thermal plants retiring before 2038.",
+   "Closed the platform-coverage inquiry: Orennia and Ascend confirmed they do not track the Duke RFP off-the-shelf (Ascend could scope a custom report), pointing to a SERC specialist as the higher-value option.",
+   "Stood up a working MVP of the deal-sourcing tool (Duke-focused, Streamlit/GitHub) that pulls Orennia, OASIS queue, FERC, CourtListener and trade-media feeds and scores distress signals (development stress, queue withdrawals, contract cliff, underperformance).",
+   "Started reading the remaining SERC reports (began the Southern Company report) to fold into the Sources Report and Benchmark."
+  ],
+  "actions": [
+   {
+    "item": "For any project within 5 miles of a planned coal retirement, research the latest retirement/gas-replacement announcements (confirm dates haven't shifted, e.g. 2038 to 2045) and whether it sits on the same primary/secondary transmission line, to produce high-level takeaways per project.",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Enhance the MVP: add ownership data (owner, and whether sold in the last ~5 years), a distress-signal scan (layoffs / cancelled PPAs for NC-active companies), and an actionable-insights view with a recommended action per hit; clarify the Orennia 'PP' underperformance nomenclature.",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Support the offtake-strategy decision (target December): frame avoided cost vs. RFP vs. sleeved green tariff and feed GC's consulting budget (Filsinger or alternative).",
+    "owner": "Nicolas",
+    "status": "Not Started"
+   },
+   {
+    "item": "Finish reading the remaining SERC reports (Southern Company in progress) and fold takeaways into the Sources Report and Benchmark.",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Continue building the consultant recommendations database (utility-linked, via FERC/OASIS/PV Magazine).",
+    "owner": "Nicolas",
+    "status": "Started"
+   },
+   {
+    "item": "GC to secure team budget to attend RE+ Florida, Southeast Power & Energy Summit (Raleigh) and DCD Connect Virginia.",
+    "owner": "Giacomo",
+    "status": "Not Started"
+   },
+   {
+    "item": "Confirm platform subscriptions and points of contact across Orennia, Ascend and Aurora.",
+    "owner": "Nicolas",
+    "status": "Started"
+   }
+  ]
+ },
+ {
+  "week": "Week 4 \u2014 [July 8, 2026]",
+  "progress": [
+   "Completed the Conference Report\u2019s priority-events tab, capturing the upcoming conferences of interest with the deeper detail (past sponsors, attendee profile, early-bird / long-lead items, non-member cost) needed to plan attendance.",
+   "Closed the RFP-coverage inquiry with Orennia and Ascend: both confirmed they do not track the Duke RFP in detail; a personalized report is possible, but a SERC specialist would carry more value for that budget (recommendation captured, emails on file).",
+   "Built an Orennia dashboard for the full Duke territory with the filters to screen any new CIM on grid congestion, nearby thermal retirements, queue status, ITC adders (low-income community, energy community), protected areas, tribal lands and wetlands, enabling faster, deeper due diligence on inbound opportunities.",
+   "Identified that Duke offers a real-time substation headroom tool, giving a direct read on interconnection feasibility when screening a project.",
+   "Advanced the SERC opportunities tool to a working MVP focused on Duke, pulling Orennia, the Duke cluster queue, OASIS, and NC/SC WARN plus automated public feeds (Trade Media RSS, FERC, CourtListener, EIA-860M, PV Magazine, Canary Media, and District Court bankruptcies) to surface distressed PV and battery projects \u2014 PPAs nearing expiry, bankruptcies, queue drop-offs, underperformers \u2014 running on Streamlit off a purpose-built GitHub repo."
+  ],
+  "actions": [
+   {
+    "item": "Read the remaining Ascend SERC reports (capacity / storage / thermal-retirement outlook) and fold the takeaways into the Sources Report and Benchmark.",
+    "owner": "Nicolas",
+    "status": "Started"
+   },
+   {
+    "item": "Decide the RFP-coverage path: scope a SERC-specialist engagement vs. a personalized Orennia report, and bring a recommendation with rough budget.",
+    "owner": "Nicolas",
+    "status": "pStarted"
+   },
+   {
+    "item": "Harden the Duke MVP opportunities tool: validate the source feeds, refine the distress scoring, and document how a hit is triaged before outreach.",
+    "owner": "Nicolas",
+    "status": "Started"
+   },
+   {
+    "item": "Establish the Aurora point of contact (via Jonathan, then Seun) to complete the three-platform intel coverage.",
+    "owner": "Nicolas",
+    "status": "Started"
+   }
+  ]
+ },
+ {
+  "week": "Week 3 \u2014 [July 1, 2026]",
+  "progress": [
+   "Reviewed and analyzed the Ascend Duke Energy Carolinas report (May 2025), extracting the market-intel action set that now drives the North Carolina workstream.",
+   "Identified and prioritized the target conferences (Southeast Power & Energy Summit, RE+ Florida, and others) as the venues to meet consultants and off-takers in person.",
+   "Defined the strategy to map the 6 Carolina projects to their counties for IRA bonus-adder eligibility, framing the analysis before running it.",
+   "Developed the approach for the coal-retirement overlay, locating where retiring coal capacity sits relative to our 6 projects to surface interconnection and capacity-unlock opportunities.",
+   "Scoped the Duke off-take intel across Orennia, Ascend and Aurora, defining two concrete deliverables: a Duke off-take primer and a Duke RFP / RSC impacts memo.",
+   "Confirmed via the RFP administrator that the resource solicitation cluster is open only to RFP projects, clarifying that a paused solar RFP removes the interconnection window."
+  ],
+  "actions": [
+   {
+    "item": "Build the 6 Carolina IRA review table (project to county) so bonus-adder eligibility can be run.",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Establish a point of contact at Orennia, Ascend and Aurora; request the Duke off-take primer and the Duke RFP / RSC impacts coverage (search platforms and ask each contact directly).",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Create the coal-retirement KMZ, one file with 6 pins for the Carolina projects overlaid with existing coal generation, to build the interconnection / capacity thesis.",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Add a second tab to the Conferences file for the priority events (Southeast Power & Energy Summit, RE+ Florida, Georgia Environmental, Sustainability Conference, DCD Connect Virginia) with past sponsors, attendee profile, early-bird / long-lead items, and non-member cost.",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Create narrative and general strategy for UOT projects",
+    "owner": "Giacomo",
+    "status": "Started"
+   }
+  ]
+ },
+ {
+  "week": "Week 2 \u2014 [June 26, 2026]",
+  "progress": [
+   "Conference Report delivered for Southeast Solar Summit and Southeast Power & Energy Summit (NC) prioritized.",
+   "SERC Benchmark Report delivered tagged by subregion and Tier.",
+   "Sources Report expanded, vetted primary sources with summaries and links",
+   "Avoided-cost methodology mapped \u2014 Duke long-term vs. hourly, marginal-MW and locational pricing.",
+   "Third offtake path identified \u2014 green tariff / sleeved PPA for research.",
+   "AI deal finder tool proposed \u2014 pulls public data to flag distressed companies worth acquiring (Pine Gate\u2013type)."
+  ],
+  "actions": [
+   {
+    "item": "Digest 2 Ascend market-intelligence reports",
+    "owner": "Nicolas / GC",
+    "status": "Finish"
+   },
+   {
+    "item": "Expand the SERC Benchmark Report \u2014 add Top 5 across industries; identify consultants/law firms that advise or have advised the utilities",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Conference Report \u2014 simplify into one banded table; add biggest national conferences and any regional conventional-generation conferences with dates/locations.",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Find conferences between now and ~September in the Southeast so the team can meet consultants in person sooner.",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Research green tariffs / Green Source Advantage (GSA-C, bring-your-own-PPA / sleeved PPA) in the Southeast \u2014 find reputable sources (e.g., Southern Co / Georgia Power programs)",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "Start the AI + ETL deal-origination automation concept (pull bankruptcies / PV Magazine / interconnection / OASIS \u2192 AI scoring for distressed-acquisition signals, e.g. Pine Gate-type).",
+    "owner": "Nicolas",
+    "status": "Finish"
+   },
+   {
+    "item": "GC to leverage existing network and reach out to consultants (Troutman, Clifford Chance, ERM) for Southeast referrals; GC to put together a ground-proofed map of Southeast consultants to share with CA.",
+    "owner": "Giacomo",
+    "status": "Not Started"
+   }
+  ]
+ },
+ {
+  "week": "Week 1 \u2014 [June 17, 2026]",
+  "progress": [
+   "Set up the recurring weekly meeting cadence, established the standing review rhythm and this living progress memo.",
+   "Compiled and researched upcoming conferences across solar, storage / data centers, and TVA, produced the Conference Report (tracker) with category, date, location, cost, attendees, and market coverage.",
+   "Identified the most relevant, trustworthy primary sources (Duke Energy Carolinas IRP, TVA documents), seeded the Sources Report (Excel) with one-line summaries and clickable links.",
+   "Began building background on PPAs and the regulated wholesale market"
+  ],
+  "actions": [
+   {
+    "item": "Consolidate all credible/recent/relevant sources into one folder",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Stand up the grounded-reports approach for AI summary",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Combine conference data into one filterable table; add Attendees and Market Coverage columns.",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Build the Southeast Benchmark table (players by category; top 5 each).",
+    "owner": "Nicolas",
+    "status": "Finished"
+   },
+   {
+    "item": "Create the References Excel (one-line summary + clickable links).",
+    "owner": "Nicolas",
+    "status": "Finished"
+   }
+  ]
+ }
+]

@@ -70,7 +70,8 @@ def render(brand):
                     '<div class="sub">The events we are actively considering. Edit in place or add rows — new rows highlight until saved.</div>',
                     unsafe_allow_html=True)
         t1 = _load_csv("conf_tier1.csv")
-        e1 = st.data_editor(t1, key="t1", num_rows="dynamic", use_container_width=True, height=280)
+        e1 = st.data_editor(t1, key="t1", num_rows="dynamic", use_container_width=True, height=280,
+            column_config={"Link": st.column_config.LinkColumn("Link")})
         if st.button("Save Tier-1", key="save_t1"): _save_csv(e1, "conf_tier1.csv"); st.success("Saved.")
 
         if st.button("🔎 Find upcoming SERC energy events (web)"):
@@ -95,7 +96,8 @@ def render(brand):
 
         st.markdown('<div class="sect" style="margin-top:14px">All events</div>', unsafe_allow_html=True)
         allc = _load_csv("conf_all.csv")
-        ea = st.data_editor(allc, key="allc", num_rows="dynamic", use_container_width=True, height=320)
+        ea = st.data_editor(allc, key="allc", num_rows="dynamic", use_container_width=True, height=320,
+                            column_config={"Link": st.column_config.LinkColumn("Link")})
         if st.button("Save all events", key="save_all"): _save_csv(ea, "conf_all.csv"); st.success("Saved.")
 
     # ═══════════════════════ BENCHMARK

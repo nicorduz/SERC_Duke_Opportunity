@@ -37,7 +37,9 @@ def build_distress(g, scr, dq, warn, media=None, courtlistener=None):
     if dq is not None:
         wd = dq[(dq["status"].str.lower() == "withdrawn") & (dq["mw"] > 30)]
         for _, r in wd.iterrows():
-            sig.append({"company": r.get("queue_id"), "signal_type": "queue_withdrawal",
+            qid = str(r.get("queue_id") or "").strip()
+            label = f"Queue {qid}" if qid and qid.lower() != "nan" else f"Withdrawn project ({r.get('county','?')} Co, {r.get('mw','?')} MW)"
+            sig.append({"company": label, "signal_type": "queue_withdrawal",
                         "signal_date": r.get("queue_date"), "source": "Duke queue",
                         "severity": 2, "county": r.get("county"), "mw": r.get("mw"), "url": ""})
     for _, r in scr.get("underperf", pd.DataFrame()).iterrows():

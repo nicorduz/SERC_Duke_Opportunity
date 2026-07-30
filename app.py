@@ -461,50 +461,85 @@ with tab_targets_playbooks:
 
 # ─────────────────────────────── MAP
 with tab_map:
-    st.markdown('<div class="sect">Asset map</div><div class="sub">Size = MW · color = opportunity score. Filter, hover, zoom.</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="sect">Asset map</div>'
+        '<div class="sub">'
+        'Circles = assets · red triangles = restricted POIs.'
+        '</div>',
+        unsafe_allow_html=True
+    )
+
     c1, c2, c3 = st.columns(3)
-    stt = c1.multiselect("State ", ["NC", "SC"], default=["NC", "SC"])
-    tech = c2.multiselect("Technology", sorted(g["Technology"].unique()), default=sorted(g["Technology"].unique()))
-    only_opp = c3.toggle("Opportunities only", value=False)
+
+    stt = c1.multiselect(
+        "State ",
+        ["NC", "SC"],
+        default=["NC", "SC"]
+    )
+
+    tech = c2.multiselect(
+        "Technology",
+        sorted(g["Technology"].dropna().unique()),
+        default=sorted(g["Technology"].dropna().unique())
+    )
+
+    only_opp = c3.toggle(
+        "Opportunities only",
+        value=False
+    )
+
     show_restricted_pois = st.toggle(
         "Show restricted POIs",
         value=True
     )
-    
+
     show_nofar = st.toggle(
         "Show Nofar sites",
         value=True
     )
-    mm = g[g["State"].isin(stt) & g["Technology"].isin(tech)].dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
-    mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
-    mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
-        # IDs de proyectos conectados a un POI restringido
-    # Clasificación normal de oportunidades
+
+    # Asset/project data
+    mm = g[
+        g["State"].isin(stt)
+        & g["Technology"].isin(tech)
+    ].dropna(
+        subset=[
+            "Latitude (Degrees)",
+            "Longitude (Degrees)"
+        ]
+    ).copy()
+
+    mm = mm.merge(
+        top[
+            [
+                "Generator ID",
+                "Opportunity Score"
+            ]
+        ],
+        on="Generator ID",
+        how="left"
+    )
+
+    mm["Opportunity Score"] = (
+        mm["Opportunity Score"]
+        .fillna(0)
+    )
+
     mm["Category"] = np.where(
-        mm["Opportunity Score"] >= max(THRESHOLD, 1e-9),
+        mm["Opportunity Score"]
+        >= max(THRESHOLD, 1e-9),
         "Opportunity",
         "No signal"
     )
 
-
-    if highlight_red_zone:
-        # Los proyectos de red zone se dibujarán en una capa separada
-        red_zone_points = mm[red_zone_mask].copy()
-        map_points = mm[~red_zone_mask].copy()
-    else:
-        # DataFrame vacío con las mismas columnas
-        red_zone_points = mm.iloc[0:0].copy()
-        map_points = mm.copy()
-
-    # Aplicar filtro de oportunidades solamente
     if only_opp:
-        map_points = map_points[
-            map_points["Category"] != "No signal"
-        ]
+        mm = mm[
+            mm["Category"] != "No signal"
+        ].copy()
 
-    # Capa principal: círculos normales
+    # Base Asset Map
     fig = px.scatter_mapbox(
-        map_points,
+        mm,
         lat="Latitude (Degrees)",
         lon="Longitude (Degrees)",
         size="Capacity (MW)",
@@ -526,55 +561,25 @@ with tab_map:
         height=650
     )
 
-    # Capa adicional: triángulos rojos para red zone
-    if highlight_red_zone and not red_zone_points.empty:
-        red_zone_customdata = red_zone_points[
-            [
-                "Power Project Name",
-                "County",
-                "Detailed Status",
-                "Opportunity Score",
-                "Capacity (MW)"
-            ]
-        ].to_numpy()
-
-        fig.add_trace(
-            go.Scattermapbox(
-                lat=red_zone_points["Latitude (Degrees)"],
-                lon=red_zone_points["Longitude (Degrees)"],
-                mode="text",
-                text=["▲"] * len(red_zone_points),
-                textfont=dict(
-                    color="#D32F2F",
-                    size=24,
-                    family="Arial"
-                ),
-                name="Opportunity in RED ZONE",
-                customdata=red_zone_customdata,
-                hovertemplate=(
-                    "<b>%{customdata[0]}</b><br>"
-                    "County: %{customdata[1]}<br>"
-                    "Status: %{customdata[2]}<br>"
-                    "Opportunity Score: %{customdata[3]:.1f}<br>"
-                    "Capacity: %{customdata[4]:.1f} MW"
-                    "<extra></extra>"
-                )
-            )
-        )
-
     fig.update_layout(
         mapbox_style="open-street-map",
-        margin=dict(l=0, r=0, t=0, b=0),
+        margin=dict(
+            l=0,
+            r=0,
+            t=0,
+            b=0
+        ),
         font_family="Inter",
-        legend_title_text="Category"
+        legend_title_text="Map layers"
     )
-        # Add Nofar sites to the Asset Map
+
+    # Nofar sites
     fig = add_nofar_layer(
         fig,
         show_nofar
     )
 
-    # Add every restricted POI directly to the Asset Map
+    # Restricted POIs
     if show_restricted_pois:
 
         restricted_pois = D.get(
@@ -588,7 +593,6 @@ with tab_map:
             )
 
         else:
-            # Normalize column names for detection
             column_lookup = {
                 str(column).strip().lower(): column
                 for column in restricted_pois.columns
@@ -665,7 +669,6 @@ with tab_map:
                 )
 
             else:
-                # Convert coordinates to numeric values
                 restricted_pois[latitude_column] = pd.to_numeric(
                     restricted_pois[latitude_column],
                     errors="coerce"
@@ -676,7 +679,6 @@ with tab_map:
                     errors="coerce"
                 )
 
-                # Remove rows without coordinates
                 restricted_pois = restricted_pois.dropna(
                     subset=[
                         latitude_column,
@@ -684,7 +686,6 @@ with tab_map:
                     ]
                 ).copy()
 
-                # Create a default name when the file has no name column
                 if name_column is None:
                     restricted_pois["_poi_name"] = "Restricted POI"
                     name_column = "_poi_name"
@@ -703,7 +704,6 @@ with tab_map:
                         ]
                     ].to_numpy()
 
-                    # One red triangle for every restricted POI
                     fig.add_trace(
                         go.Scattermapbox(
                             lat=restricted_pois[
@@ -736,7 +736,7 @@ with tab_map:
                         )
                     )
 
-    # Display the Asset Map with all layers
+    # This displays the Asset Map, not the Withdrawals map
     st.plotly_chart(
         fig,
         use_container_width=True,

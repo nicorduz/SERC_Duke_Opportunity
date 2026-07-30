@@ -365,7 +365,7 @@ FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
        "Age (yrs)": st.column_config.NumberColumn("Age", format="%.0f y")}
 
 # ─────────────────────────────── DASHBOARD
-with tabs[0]:
+with tab_dashboard:
     a, b = st.columns([3, 2])
     with a:
         st.markdown('<div class="sect">Top opportunities</div><div class="sub">Composite of nine screens — every point decomposes in the Why column.</div>', unsafe_allow_html=True)
@@ -401,7 +401,7 @@ with tabs[0]:
         st.info("Run the EIA-860M update (Data & updates) to unlock owner roll-up analysis.")
 
 # ─────────────────────────────── TARGETS & PLAYBOOKS
-with tabs[1]:
+with tab_targets_playbooks:
     left, right = st.columns([2, 3])
     with left:
         st.markdown('<div class="sect">Pick a target</div>', unsafe_allow_html=True)
@@ -460,7 +460,7 @@ with tabs[1]:
 <div class="hl">{s['have_lack']}</div></div></div>""", unsafe_allow_html=True)
 
 # ─────────────────────────────── MAP
-with tabs[2]:
+with tab_map:
     st.markdown('<div class="sect">Asset map</div><div class="sub">Size = MW · color = opportunity score. Filter, hover, zoom.</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
     stt = c1.multiselect("State ", ["NC", "SC"], default=["NC", "SC"])
@@ -584,7 +584,7 @@ with tabs[2]:
     )
 
 # ─────────────────────────────── WITHDRAWALS
-with tabs[3]:
+with tab_withdrawals:
     wd = scr.get("withdrawn_queue", pd.DataFrame())
     st.markdown(f'<div class="sect">Withdrawn from Duke queue — {len(wd)} solar/battery positions</div>'
                 '<div class="sub">Every row = a developer who sank deposits and walked. Color = # withdrawals per county.</div>',
@@ -648,7 +648,7 @@ with tabs[3]:
         st.info("No withdrawals found in the Duke queue file.")
 
 # ─────────────────────────────── ACTION QUEUE
-with tabs[7]:
+with tab_action_queue:
     st.markdown('<div class="sect">Action Queue</div>'
                 '<div class="sub">Only projects above threshold, each with a recommended action, '
                 'the signals that fired it, and the source link to verify before contacting.</div>',
@@ -679,12 +679,12 @@ with tabs[7]:
                        file_name="action_queue.csv", mime="text/csv")
 
 # ─────────────────────────────── TEAM HUB
-with tabs[8]:
+with tab_team_hub:
     team_hub.render({"INDIGO": INDIGO, "GOLD": GOLD, "DEEP": DEEP, "INK": INK})
 
 
 # ─────────────────────────────── SIGNALS
-with tabs[4]:
+with tab_live_signals:
     def cardlist(path, kind):
         if not os.path.exists(path):
             st.markdown(f'<div class="card"><b>{kind}</b><br><span class="sub">Not fetched yet — use Data & updates.</span></div>', unsafe_allow_html=True); return
@@ -717,7 +717,7 @@ with tabs[4]:
         st.info("Run 'Scan web' in Data & updates to populate company stress signals.")
 
 # ─────────────────────────────── DATA & UPDATES
-with tabs[5]:
+with tab_date_updates:
     st.markdown('<div class="sect">Live sources — one-click update</div><div class="sub">These fetch from the internet now. Everything else below is static by design (refresh by committing new files to the repo).</div>', unsafe_allow_html=True)
     cols = st.columns(4)
     labels = {"media_rss": ("Trade media RSS", fetch_media), "ferc_elibrary": ("FERC eLibrary", fetch_ferc),
@@ -751,7 +751,7 @@ with tabs[5]:
         unsafe_allow_html=True)
 
 # ─────────────────────────────── SCORE & METHODOLOGY
-with tabs[6]:
+with tab_score_methodology:
     st.markdown('<div class="sect">How the score is calculated</div>'
                 '<div class="sub">Weighted sum: each project passes through 9 filters ("screens"). '
                 'For every rule it meets, it adds the weight assigned to that screen. It is a simple and auditable sum: '

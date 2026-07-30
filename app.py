@@ -175,17 +175,73 @@ reg = load_reg()
 
 # ─────────────────────────────── data
 @st.cache_data(show_spinner=False)
-def load_all():
+def file_signature(path):
+    """
+    Returns a content hash so Streamlit reloads the data
+    whenever the Parquet file changes.
+    """
+    path = Path(path)
+
+    if not path.exists():
+        return "missing"
+
+    sha256 = hashlib.sha256()
+
+    with path.open("rb") as file:
+        for chunk in iter(lambda: file.read(1024 * 1024), b""):
+            sha256.update(chunk)
+
+    return sha256.hexdigest()
+
+
+@st.cache_data(show_spinner=False)
+def load_all(red_zone_signature):
     d = {}
-    d["g"] = pd.read_parquet(f"{DATA}/orennia_generators.parquet")
-    d["m"] = pd.read_parquet(f"{DATA}/orennia_monthly.parquet")
-    for k in ["duke_queue", "duke_oasis", "red_zone", "restrictions", "contested", "warn_nc", "warn_sc"]:
-        p = f"{UP}/{k}.parquet"
-        if os.path.exists(p): d[k] = pd.read_parquet(p)
-    if os.path.exists(f"{DATA}/eia860m.parquet"): d["eia"] = pd.read_parquet(f"{DATA}/eia860m.parquet")
+
+    d["g"] = pd.read_parquet(
+        DATA / "orennia_generators.parquet"
+    )
+
+    d["m"] = pd.read_parquet(
+        DATA / "orennia_monthly.parquet"
+    )
+
+    for k in [
+        "duke_queue",
+        "duke_oasis",
+        "red_zone",
+        "restrictions",
+        "contested",
+        "warn_nc",
+        "warn_sc",
+    ]:
+        path = UP / f"{k}.parquet"
+
+        if path.exists():
+            d[k] = pd.read_parquet(path)
+
+    eia_path = DATA / "eia860m.parquet"
+
+    if eia_path.exists():
+        d["eia"] = pd.read_parquet(eia_path)
+
     return d
 
-D = load_all()
+RED_ZONE_PATH = UP / "red_zone.parquet"
+
+D = load_all(
+    file_signature(RED_ZONE_PATH)
+)
+if "red_zone" in D:
+    print("")
+    print("RED ZONE FILE LOADED BY STREAMLIT:")
+    print(RED_ZONE_PATH.resolve())
+    print("")
+    print("RED ZONE COLUMNS:")
+    print(D["red_zone"].columns.tolist())
+    print("")
+    print("RED ZONE ROWS:")
+    print(len(D["red_zone"]))
 g = D["g"]
 _warn = pd.concat([D[k] for k in ("warn_nc", "warn_sc") if k in D], ignore_index=True) \
         if any(k in D for k in ("warn_nc", "warn_sc")) else None

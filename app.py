@@ -182,24 +182,164 @@ def save_reg(r): json.dump(r, open(REG, "w"), indent=1, default=str)
 reg = load_reg()
 
 # ─────────────────────────────── data
-@st.cache_data(show_spinner=False)
 def file_signature(path):
     """
-    Returns a content hash so Streamlit reloads the data
-    whenever the Parquet file changes.
+    Changes whenever the file is replaced, forcing Streamlit
+    to reload the cached datasets.
     """
     path = Path(path)
 
     if not path.exists():
-        return "missing"
+        return ("missing",)
 
-    sha256 = hashlib.sha256()
+    file_stat = path.stat()
 
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            sha256.update(chunk)
+    return (
+        str(path.resolve()),
+        file_stat.st_mtime_ns,
+        file_stat.st_size,
+    )
 
-    return sha256.hexdigest()
+
+def normalize_red_zone(red_zone):
+    """
+    Makes both the old and new red-zone Parquet schemas compatible
+    with engine.py and the Asset Map.
+
+    Existing columns are preserved. Canonical lowercase columns
+    are added for the app and engine.
+    """
+    if red_zone is None or red_zone.empty:
+        return pd.DataFrame(
+            columns=[
+                "line_id",
+                "line_name",
+                "kv",
+                "substation",
+                "type",
+                "latitude",
+                "longitude",
+            ]
+        )
+
+    result = red_zone.copy()
+
+    # Actual column names indexed by normalized name.
+    column_lookup = {
+        str(column).strip().lower(): column
+        for column in result.columns
+    }
+
+    aliases = {
+        "line_id": [
+            "line_id",
+            "ol#",
+            "ol #",
+            "ol",
+        ],
+        "line_name": [
+            "line_name",
+            "line name",
+        ],
+        "kv": [
+            "kv",
+        ],
+        "substation": [
+            "substation",
+            "substation name",
+            "poi",
+            "poi name",
+        ],
+        "type": [
+            "type",
+        ],
+        "latitude": [
+            "latitude",
+            "lat",
+            "latitude (degrees)",
+            "poi latitude",
+            "substation latitude",
+        ],
+        "longitude": [
+            "longitude",
+            "lon",
+            "lng",
+            "long",
+            "longitude (degrees)",
+            "poi longitude",
+            "substation longitude",
+        ],
+    }
+
+    # Add canonical lowercase columns without deleting original columns.
+    for canonical_column, possible_names in aliases.items():
+        if canonical_column in result.columns:
+            continue
+
+        source_column = next(
+            (
+                column_lookup[possible_name]
+                for possible_name in possible_names
+                if possible_name in column_lookup
+            ),
+            None,
+        )
+
+        if source_column is not None:
+            result[canonical_column] = result[source_column]
+
+    # engine.py requires this exact column.
+    if "substation" not in result.columns:
+        raise ValueError(
+            "red_zone.parquet does not contain a recognizable "
+            f"substation column. Columns found: {result.columns.tolist()}"
+        )
+
+    # Create optional columns when they are absent.
+    for column in [
+        "line_id",
+        "line_name",
+        "kv",
+        "type",
+        "latitude",
+        "longitude",
+    ]:
+        if column not in result.columns:
+            result[column] = pd.NA
+
+    # Guarantee that engine.py receives valid strings only.
+    result["substation"] = (
+        result["substation"]
+        .astype("string")
+        .fillna("")
+        .str.strip()
+    )
+
+    # Remove separator/header rows without an actual substation.
+    result = result[
+        result["substation"].ne("")
+    ].copy()
+
+    # Standardize text fields.
+    for column in [
+        "line_id",
+        "line_name",
+        "type",
+    ]:
+        result[column] = result[column].astype("string")
+
+    # Standardize numeric fields.
+    for column in [
+        "kv",
+        "latitude",
+        "longitude",
+    ]:
+        result[column] = pd.to_numeric(
+            result[column],
+            errors="coerce",
+        )
+
+    return result
 
 
 @st.cache_data(show_spinner=False)
@@ -214,7 +354,7 @@ def load_all(red_zone_signature):
         DATA / "orennia_monthly.parquet"
     )
 
-    for k in [
+    for dataset_name in [
         "duke_queue",
         "duke_oasis",
         "red_zone",
@@ -223,10 +363,17 @@ def load_all(red_zone_signature):
         "warn_nc",
         "warn_sc",
     ]:
-        path = UP / f"{k}.parquet"
+        dataset_path = UP / f"{dataset_name}.parquet"
 
-        if path.exists():
-            d[k] = pd.read_parquet(path)
+        if not dataset_path.exists():
+            continue
+
+        dataset = pd.read_parquet(dataset_path)
+
+        if dataset_name == "red_zone":
+            dataset = normalize_red_zone(dataset)
+
+        d[dataset_name] = dataset
 
     eia_path = DATA / "eia860m.parquet"
 
@@ -235,21 +382,12 @@ def load_all(red_zone_signature):
 
     return d
 
+
 RED_ZONE_PATH = UP / "red_zone.parquet"
 
 D = load_all(
     file_signature(RED_ZONE_PATH)
 )
-if "red_zone" in D:
-    print("")
-    print("RED ZONE FILE LOADED BY STREAMLIT:")
-    print(RED_ZONE_PATH.resolve())
-    print("")
-    print("RED ZONE COLUMNS:")
-    print(D["red_zone"].columns.tolist())
-    print("")
-    print("RED ZONE ROWS:")
-    print(len(D["red_zone"]))
 g = D["g"]
 _warn = pd.concat([D[k] for k in ("warn_nc", "warn_sc") if k in D], ignore_index=True) \
         if any(k in D for k in ("warn_nc", "warn_sc")) else None

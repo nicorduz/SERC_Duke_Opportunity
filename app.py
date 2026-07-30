@@ -466,13 +466,19 @@ with tab_map:
     stt = c1.multiselect("State ", ["NC", "SC"], default=["NC", "SC"])
     tech = c2.multiselect("Technology", sorted(g["Technology"].unique()), default=sorted(g["Technology"].unique()))
     only_opp = c3.toggle("Opportunities only", value=False)
-    show_nofar = st.toggle("Show Nofar sites", value=True)
+    show_restricted_pois = st.toggle(
+        "Show restricted POIs",
+        value=True
+    )
+    
+    show_nofar = st.toggle(
+        "Show Nofar sites",
+        value=True
+    )
     mm = g[g["State"].isin(stt) & g["Technology"].isin(tech)].dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
     mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
         # IDs de proyectos conectados a un POI restringido
-    rz_ids = set(scr["red_zone"]["Generator ID"])
-
     # Clasificación normal de oportunidades
     mm["Category"] = np.where(
         mm["Opportunity Score"] >= max(THRESHOLD, 1e-9),
@@ -480,18 +486,6 @@ with tab_map:
         "No signal"
     )
 
-    # Control para mostrar u ocultar la red zone
-    highlight_red_zone = c3.toggle(
-        "Highlight red zone (restricted POI)",
-        value=False
-    )
-
-    # Mantiene la lógica actual:
-    # solamente resalta proyectos que son oportunidades Y están en red zone
-    red_zone_mask = (
-        mm["Generator ID"].isin(rz_ids)
-        & (mm["Category"] == "Opportunity")
-    )
 
     if highlight_red_zone:
         # Los proyectos de red zone se dibujarán en una capa separada
@@ -574,13 +568,181 @@ with tab_map:
         font_family="Inter",
         legend_title_text="Category"
     )
+        # Add Nofar sites to the Asset Map
+    fig = add_nofar_layer(
+        fig,
+        show_nofar
+    )
 
-    fig = add_nofar_layer(fig, show_nofar)
+    # Add every restricted POI directly to the Asset Map
+    if show_restricted_pois:
 
+        restricted_pois = D.get(
+            "red_zone",
+            pd.DataFrame()
+        ).copy()
+
+        if restricted_pois.empty:
+            st.warning(
+                "The red_zone dataset is empty."
+            )
+
+        else:
+            # Normalize column names for detection
+            column_lookup = {
+                str(column).strip().lower(): column
+                for column in restricted_pois.columns
+            }
+
+            latitude_candidates = [
+                "latitude",
+                "lat",
+                "latitude (degrees)",
+                "poi latitude",
+                "substation latitude"
+            ]
+
+            longitude_candidates = [
+                "longitude",
+                "lon",
+                "lng",
+                "long",
+                "longitude (degrees)",
+                "poi longitude",
+                "substation longitude"
+            ]
+
+            name_candidates = [
+                "poi",
+                "poi name",
+                "restricted poi",
+                "substation",
+                "substation name",
+                "station",
+                "station name",
+                "name"
+            ]
+
+            latitude_column = next(
+                (
+                    column_lookup[name]
+                    for name in latitude_candidates
+                    if name in column_lookup
+                ),
+                None
+            )
+
+            longitude_column = next(
+                (
+                    column_lookup[name]
+                    for name in longitude_candidates
+                    if name in column_lookup
+                ),
+                None
+            )
+
+            name_column = next(
+                (
+                    column_lookup[name]
+                    for name in name_candidates
+                    if name in column_lookup
+                ),
+                None
+            )
+
+            if (
+                latitude_column is None
+                or longitude_column is None
+            ):
+                st.error(
+                    "The red_zone file does not contain recognizable "
+                    "latitude and longitude columns."
+                )
+
+                st.write(
+                    "Columns found:",
+                    restricted_pois.columns.tolist()
+                )
+
+            else:
+                # Convert coordinates to numeric values
+                restricted_pois[latitude_column] = pd.to_numeric(
+                    restricted_pois[latitude_column],
+                    errors="coerce"
+                )
+
+                restricted_pois[longitude_column] = pd.to_numeric(
+                    restricted_pois[longitude_column],
+                    errors="coerce"
+                )
+
+                # Remove rows without coordinates
+                restricted_pois = restricted_pois.dropna(
+                    subset=[
+                        latitude_column,
+                        longitude_column
+                    ]
+                ).copy()
+
+                # Create a default name when the file has no name column
+                if name_column is None:
+                    restricted_pois["_poi_name"] = "Restricted POI"
+                    name_column = "_poi_name"
+
+                if restricted_pois.empty:
+                    st.warning(
+                        "No restricted POIs have valid coordinates."
+                    )
+
+                else:
+                    poi_hover_data = restricted_pois[
+                        [
+                            name_column,
+                            latitude_column,
+                            longitude_column
+                        ]
+                    ].to_numpy()
+
+                    # One red triangle for every restricted POI
+                    fig.add_trace(
+                        go.Scattermapbox(
+                            lat=restricted_pois[
+                                latitude_column
+                            ],
+                            lon=restricted_pois[
+                                longitude_column
+                            ],
+                            mode="text",
+                            text=[
+                                "▲"
+                                for _ in range(
+                                    len(restricted_pois)
+                                )
+                            ],
+                            textfont=dict(
+                                color="#FF0000",
+                                size=26,
+                                family="Arial Black"
+                            ),
+                            name="Restricted POI",
+                            customdata=poi_hover_data,
+                            hovertemplate=(
+                                "<b>%{customdata[0]}</b><br>"
+                                "Restricted POI<br>"
+                                "Latitude: %{customdata[1]:.5f}<br>"
+                                "Longitude: %{customdata[2]:.5f}"
+                                "<extra></extra>"
+                            )
+                        )
+                    )
+
+    # Display the Asset Map with all layers
     st.plotly_chart(
         fig,
         use_container_width=True,
-        config={"displayModeBar": False}
+        config={
+            "displayModeBar": False
+        }
     )
 
 # ─────────────────────────────── WITHDRAWALS

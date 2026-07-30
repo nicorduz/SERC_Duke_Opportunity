@@ -337,8 +337,27 @@ st.markdown(f"""
   <div class="kpi"><div class="v">{len(top)}</div><div class="l">Scored opportunities</div></div>
 </div>""", unsafe_allow_html=True)
 
-tabs = st.tabs([ "Dashboard", "Targets & playbooks", "Map", "Withdrawals",
-                "Live signals", "Data & updates" , "Score & Methodology", "Action Queue","Team Hub"])
+(
+    tab_date_updates,
+    tab_live_signals,
+    tab_score_methodology,
+    tab_targets_playbooks,
+    tab_dashboard,
+    tab_map,
+    tab_withdrawals,
+    tab_action_queue,
+    tab_team_hub,
+) = st.tabs([
+    "Date & Updates",
+    "Live Signals",
+    "Score & Methodology",
+    "Targets & Playbooks",
+    "Dashboard",
+    "Map",
+    "Withdrawals",
+    "Action Queue",
+    "Team Hub",
+])
 
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
        "Opportunity Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=float(top["Opportunity Score"].max() or 8), format="%.1f"),
@@ -451,26 +470,54 @@ with tabs[2]:
     mm = g[g["State"].isin(stt) & g["Technology"].isin(tech)].dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
     mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
+        # IDs de proyectos conectados a un POI restringido
     rz_ids = set(scr["red_zone"]["Generator ID"])
-    mm["Category"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9), "Opportunity", "No signal")
-    
-    if c3.toggle("Highlight red zone (restricted POI)"):
-        mm.loc[mm["Generator ID"].isin(rz_ids) & (mm["Category"] == "Opportunity"),
-               "Category"] = "Opportunity in RED ZONE"
-    
+
+    # Clasificación normal de oportunidades
+    mm["Category"] = np.where(
+        mm["Opportunity Score"] >= max(THRESHOLD, 1e-9),
+        "Opportunity",
+        "No signal"
+    )
+
+    # Control para mostrar u ocultar la red zone
+    highlight_red_zone = c3.toggle(
+        "Highlight red zone (restricted POI)",
+        value=False
+    )
+
+    # Mantiene la lógica actual:
+    # solamente resalta proyectos que son oportunidades Y están en red zone
+    red_zone_mask = (
+        mm["Generator ID"].isin(rz_ids)
+        & (mm["Category"] == "Opportunity")
+    )
+
+    if highlight_red_zone:
+        # Los proyectos de red zone se dibujarán en una capa separada
+        red_zone_points = mm[red_zone_mask].copy()
+        map_points = mm[~red_zone_mask].copy()
+    else:
+        # DataFrame vacío con las mismas columnas
+        red_zone_points = mm.iloc[0:0].copy()
+        map_points = mm.copy()
+
+    # Aplicar filtro de oportunidades solamente
     if only_opp:
-        mm = mm[mm["Category"] != "No signal"]
-    
+        map_points = map_points[
+            map_points["Category"] != "No signal"
+        ]
+
+    # Capa principal: círculos normales
     fig = px.scatter_mapbox(
-        mm,
+        map_points,
         lat="Latitude (Degrees)",
         lon="Longitude (Degrees)",
         size="Capacity (MW)",
         color="Category",
         color_discrete_map={
             "No signal": "#C7C4D9",
-            "Opportunity": INDIGO,
-            "Opportunity in RED ZONE": GOLD
+            "Opportunity": INDIGO
         },
         hover_name="Power Project Name",
         hover_data={
@@ -484,10 +531,57 @@ with tabs[2]:
         zoom=6.2,
         height=650
     )
-    fig.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0),
-                      font_family="Inter", coloraxis_colorbar_title="Score")
+
+    # Capa adicional: triángulos rojos para red zone
+    if highlight_red_zone and not red_zone_points.empty:
+        red_zone_customdata = red_zone_points[
+            [
+                "Power Project Name",
+                "County",
+                "Detailed Status",
+                "Opportunity Score",
+                "Capacity (MW)"
+            ]
+        ].to_numpy()
+
+        fig.add_trace(
+            go.Scattermapbox(
+                lat=red_zone_points["Latitude (Degrees)"],
+                lon=red_zone_points["Longitude (Degrees)"],
+                mode="text",
+                text=["▲"] * len(red_zone_points),
+                textfont=dict(
+                    color="#D32F2F",
+                    size=24,
+                    family="Arial"
+                ),
+                name="Opportunity in RED ZONE",
+                customdata=red_zone_customdata,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    "County: %{customdata[1]}<br>"
+                    "Status: %{customdata[2]}<br>"
+                    "Opportunity Score: %{customdata[3]:.1f}<br>"
+                    "Capacity: %{customdata[4]:.1f} MW"
+                    "<extra></extra>"
+                )
+            )
+        )
+
+    fig.update_layout(
+        mapbox_style="open-street-map",
+        margin=dict(l=0, r=0, t=0, b=0),
+        font_family="Inter",
+        legend_title_text="Category"
+    )
+
     fig = add_nofar_layer(fig, show_nofar)
-    st.plotly_chart(fig, use_container_width=True)
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={"displayModeBar": False}
+    )
 
 # ─────────────────────────────── WITHDRAWALS
 with tabs[3]:

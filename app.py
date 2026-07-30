@@ -2,6 +2,7 @@
 Nofar SERC Deal Intelligence — Duke Carolinas (DEC + DEP) · professional MVP UI
 """
 import json, os, io, base64
+import hashlib
 import numpy as np
 import pandas as pd
 import streamlit as st

@@ -905,38 +905,54 @@ with tab_map:
                             longitude_column
                         ]
                     ].to_numpy()
-
+                    # Large red marker for every restricted POI.
+                    # The red circle guarantees that the POI remains visible.
                     fig.add_trace(
                         go.Scattermapbox(
-                            lat=restricted_pois[
-                                latitude_column
-                            ],
-                            lon=restricted_pois[
-                                longitude_column
-                            ],
-                            mode="text",
+                            lat=restricted_pois[latitude_column],
+                            lon=restricted_pois[longitude_column],
+                    
+                            # Red circle plus white triangle.
+                            mode="markers+text",
+                    
+                            marker=dict(
+                                size=22,
+                                color="#FF0000",
+                                opacity=1.0
+                            ),
+                    
                             text=[
                                 "▲"
-                                for _ in range(
-                                    len(restricted_pois)
-                                )
+                                for _ in range(len(restricted_pois))
                             ],
+                    
+                            textposition="middle center",
+                    
                             textfont=dict(
-                                color="#FF0000",
-                                size=26,
+                                color="#FFFFFF",
+                                size=12,
                                 family="Arial Black"
                             ),
+                    
                             name="Restricted POI",
+                    
                             customdata=poi_hover_data,
+                    
                             hovertemplate=(
                                 "<b>%{customdata[0]}</b><br>"
-                                "Restricted POI<br>"
+                                "<b>Restricted POI</b><br>"
                                 "Latitude: %{customdata[1]:.5f}<br>"
                                 "Longitude: %{customdata[2]:.5f}"
                                 "<extra></extra>"
-                            )
+                            ),
+                    
+                            showlegend=True
                         )
                     )
+    st.caption(
+        f"Displaying {len(restricted_pois)} restricted POIs "
+        "as red markers on the Asset Map."
+    )
 
     # This displays the Asset Map, not the Withdrawals map
     st.plotly_chart(

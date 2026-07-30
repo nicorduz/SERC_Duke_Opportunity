@@ -8,6 +8,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import distress_scan, web_signals
+from pathlib import Path
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
@@ -63,9 +64,15 @@ def load_counties():
         fig_w.update_layout(margin=dict(l=0,r=0,t=0,b=0), coloraxis_colorbar_title="Withdrawals")
         st.plotly_chart(fig_w, use_container_width=True, config={"displayModeBar": False})
 
-DATA, UP = "data", "data_uploads"
-os.makedirs(DATA, exist_ok=True)
-REG = os.path.join(DATA, "sources_registry.json")
+BASE_DIR = Path(__file__).resolve().parent
+
+DATA = BASE_DIR / "data"
+UP = BASE_DIR / "data_uploads"
+
+DATA.mkdir(parents=True, exist_ok=True)
+UP.mkdir(parents=True, exist_ok=True)
+
+REG = DATA / "sources_registry.json"
 TODAY = pd.Timestamp.today().normalize()
 
 # ─────────────────────────────── brand tokens

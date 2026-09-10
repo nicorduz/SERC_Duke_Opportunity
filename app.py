@@ -415,15 +415,15 @@ g = D["g"]
 
 # >>> NOFAR-ADD: SERC-wide scope selector + geo-signal controls
 with st.sidebar:
-    st.markdown("### Universo")
-    _scope_mode = st.radio("Alcance", ["SERC (Non-ISO)", "Solo Duke NC/SC"], index=0, key="scope_mode")
-    with st.expander("Señales geográficas"):
-        TH_R  = st.slider("Radio térmicas (km)", 1, 50, 10)
-        TH_YR = st.slider("Retiro desde año", 2026, 2045, 2028)
-        TH_TY = st.multiselect("Tipo planta", sorted(scope.THERMAL_TYPES),
+    st.markdown("### Universe")
+    _scope_mode = st.radio("Scope", ["SERC (Non-ISO)", "Duke NC/SC only"], index=0, key="scope_mode")
+    with st.expander("Geographic signals"):
+        TH_R  = st.slider("Thermal radius (km)", 1, 50, 10)
+        TH_YR = st.slider("Retiring from year", 2026, 2045, 2028)
+        TH_TY = st.multiselect("Plant type", sorted(scope.THERMAL_TYPES),
                                default=sorted(scope.THERMAL_TYPES))
-        DC_R  = st.slider("Radio data centers (km)", 1, 60, 20)
-if _scope_mode == "Solo Duke NC/SC":
+        DC_R  = st.slider("Data center radius (km)", 1, 60, 20)
+if _scope_mode == "Duke NC/SC only":
     g = scope.apply_scope(g, states=["NC", "SC"], duke_only=True)
 else:
     g = scope.apply_scope(g, iso="Non-ISO")
@@ -433,9 +433,9 @@ G_ALL = g.copy()
 if "Is Thermal" in g.columns:
     g = g[~g["Is Thermal"].fillna(False)].reset_index(drop=True)
 if _MISSING:
-    st.sidebar.warning("Módulos opcionales no cargados:\n\n- " + "\n- ".join(_MISSING))
-st.sidebar.caption("Universo: " + scope.region_label(g)
-                   + (f" · {int(G_ALL['Is Thermal'].sum())} térmicas (contexto)"
+    st.sidebar.warning("Optional modules not loaded:\n\n- " + "\n- ".join(_MISSING))
+st.sidebar.caption("Universe: " + scope.region_label(g)
+                   + (f" · {int(G_ALL['Is Thermal'].sum())} thermal plants (context)"
                       if "Is Thermal" in G_ALL.columns else ""))
 # <<< NOFAR-ADD
 
@@ -463,7 +463,7 @@ try:
 except Exception as _e:
     provenance, per_proj = pd.DataFrame(), pd.DataFrame()
     TH_DET, DC_DET = pd.DataFrame(), pd.DataFrame()
-    st.sidebar.warning(f"Señales nuevas no cargadas: {_e}")
+    st.sidebar.warning(f"New signals not loaded: {_e}")
 # <<< NOFAR-ADD
 DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
@@ -707,7 +707,8 @@ with tab_targets_playbooks:
     with left:
         st.markdown('<div class="sect">Pick a target</div>', unsafe_allow_html=True)
         f1, f2 = st.columns(2)
-        stt = f1.multiselect("State", ["NC", "SC"], default=["NC", "SC"], label_visibility="collapsed")
+        _st_opts = sorted(g["State"].dropna().unique())
+        stt = f1.multiselect("State", _st_opts, default=_st_opts, label_visibility="collapsed")
         minmw = f2.slider("Min MW", 0.0, 80.0, 0.0, 1.0, label_visibility="collapsed")
         tt = top[top["State"].isin(stt) & (top["Capacity (MW)"] >= minmw)]
         sel = st.selectbox("Target", tt["Generator ID"].head(80),
@@ -733,29 +734,29 @@ with tab_targets_playbooks:
 
         # >>> NOFAR-ADD: full attribute sheet from the merged Orennia exports
         _ATTR_GROUPS = {
-            "Identificación": ["Generator ID", "Generator Name", "Owner", "Parent Company",
+            "Identification": ["Generator ID", "Generator Name", "Owner", "Parent Company",
                                "Parent Company 2", "EIA Plant ID", "EIA Generator ID",
                                "EIA Unit Code", "FERC Docket ID"],
-            "Equipo y tecnología": ["Power Project Type", "Equipment Manufacturer",
+            "Equipment & technology": ["Power Project Type", "Equipment Manufacturer",
                                     "Equipment Model", "Panel Type", "Battery Type",
                                     "Storage Duration (Hours)", "Storage Energy Rating (MWh)",
                                     "Number of Turbines (Number)", "Wind Turbine Capacity (kW)",
                                     "Capex Per Watt ($/W)", "EPC"],
-            "Incentivos y siting": ["PTC/ITC", "Native American Lands",
+            "Incentives & siting": ["PTC/ITC", "Native American Lands",
                                     "Low Income Communities",
                                     "Retired Coal Facilities Energy Communities",
                                     "Behind the Meter", "CCUS Status"],
-            "Interconexión": ["Balancing Authority Code", "ISO", "Transmission Owner",
+            "Interconnection": ["Balancing Authority Code", "ISO", "Transmission Owner",
                               "Point of Interconnection", "Connection Voltage (kV)",
                               "Queue ID", "Queue Cycle", "Queue Date",
                               "Interconnection Service Type",
                               "Interconnection Cost Total ($)", "IX Cost $/kW"],
-            "Contrato": ["Contract Type", "Contract Offtaker", "Contract Offtaker Type",
+            "Contract": ["Contract Type", "Contract Offtaker", "Contract Offtaker Type",
                          "Contract Price Type", "Contract Price ($/MWh)",
                          "Contract Price ($/kW-month)", "Contract Capacity (MW)",
                          "Contract Term Years (Year)", "Contract Execution Date",
                          "Contract Termination Date", "Contract Delivery Location"],
-            "Fechas y desempeño": ["Power Project Status", "Detailed Status",
+            "Dates & performance": ["Power Project Status", "Detailed Status",
                                    "Chance of Success (Percentage)", "IRR (Percentage)",
                                    "First Power Date", "Reported First Power Date",
                                    "Estimated Retirement Date", "Reported Retirement Date",
@@ -763,8 +764,8 @@ with tab_targets_playbooks:
                                    "CF (12m)", "CF (prev 12m)", "CF Trend (pp)",
                                    "CF (fcst 10y)", "Has Generation History"],
         }
-        with st.expander("📋 Ficha completa del proyecto (todos los campos de Orennia)"):
-            _hide_empty = st.checkbox("Ocultar campos vacíos", value=True, key=f"he_{sel}")
+        with st.expander("📋 Full project sheet (all Orennia fields)"):
+            _hide_empty = st.checkbox("Hide empty fields", value=True, key=f"he_{sel}")
             for _grp, _cols in _ATTR_GROUPS.items():
                 _rows = []
                 for _c in _cols:
@@ -776,7 +777,7 @@ with tab_targets_playbooks:
                         continue
                     if isinstance(_v, pd.Timestamp):
                         _v = _v.strftime("%Y-%m-%d")
-                    _rows.append({"Campo": _c, "Valor": "—" if _empty else str(_v)})
+                    _rows.append({"Field": _c, "Value": "—" if _empty else str(_v)})
                 if _rows:
                     st.markdown(f"**{_grp}**")
                     st.dataframe(pd.DataFrame(_rows), hide_index=True,
@@ -823,10 +824,10 @@ with tab_targets_playbooks:
         _sig_here = provenance[provenance["Generator ID"] == sel] \
             if len(provenance) and "Generator ID" in provenance.columns else None
         if _sig_here is not None and len(_sig_here):
-            with st.expander(f"🔎 Señales de distress ({len(_sig_here)}) — fuentes"):
+            with st.expander(f"🔎 Distress signals ({len(_sig_here)}) — sources"):
                 st.dataframe(_sig_here[["match_type","signal_type","matched_on","title","date","source","url"]],
                              hide_index=True, use_container_width=True,
-                             column_config={"url": st.column_config.LinkColumn("Fuente")})
+                             column_config={"url": st.column_config.LinkColumn("Source")})
         if ai_assistant is not None:
             ai_assistant.render_project_chat(row, _sig_here,
                                              api_key=st.secrets.get("OPENAI_API_KEY"))
@@ -835,303 +836,223 @@ with tab_targets_playbooks:
 with tab_map:
     st.markdown(
         '<div class="sect">Asset map</div>'
-        '<div class="sub">'
-        'Circles = assets · red triangles = restricted POIs.'
-        '</div>',
-        unsafe_allow_html=True
-    )
+        '<div class="sub">Colour = technology · size = capacity · use the filters to '
+        'slice the portfolio by siting, incentives, ownership and signals.</div>',
+        unsafe_allow_html=True)
 
-    c1, c2, c3 = st.columns(3)
+    # ---------- filter panel ----------
+    with st.expander("🔎 Map filters", expanded=True):
+        r1 = st.columns(4)
+        f_state = r1[0].multiselect("State", sorted(g["State"].dropna().unique()),
+                                    default=sorted(g["State"].dropna().unique()))
+        _ba_opts = sorted(g["Balancing Authority Code"].dropna().unique()) \
+            if "Balancing Authority Code" in g.columns else []
+        f_ba = r1[1].multiselect("Balancing authority", _ba_opts, default=_ba_opts)
+        _ty_opts = sorted(g["Power Project Type"].dropna().unique()) \
+            if "Power Project Type" in g.columns else sorted(g["Technology"].dropna().unique())
+        f_type = r1[2].multiselect("Technology", _ty_opts, default=_ty_opts)
+        f_status = r1[3].multiselect("Status", sorted(g["Detailed Status"].dropna().unique()),
+                                     default=[])
 
-    stt = c1.multiselect(
-        "State ",
-        ["NC", "SC"],
-        default=["NC", "SC"]
-    )
+        r2 = st.columns(4)
+        _mwmax = int(np.nan_to_num(g["Capacity (MW)"].max(), nan=1000)) or 1000
+        f_mw = r2[0].slider("Capacity (MW)", 0, _mwmax, (0, _mwmax))
+        f_score = r2[1].slider("Min opportunity score", 0.0,
+                               float(max(top["Opportunity Score"].max() if len(top) else 10, 10)),
+                               0.0, 0.5)
+        _owner_opts = sorted(g["Owner"].dropna().unique()) if "Owner" in g.columns else []
+        f_owner = r2[2].multiselect("Owner", _owner_opts, default=[])
+        color_by = r2[3].selectbox(
+            "Colour by",
+            ["Technology", "Status", "Opportunity", "Balancing authority", "Parent company"])
 
-    tech = c2.multiselect(
-        "Technology",
-        sorted(g["Technology"].dropna().unique()),
-        default=sorted(g["Technology"].dropna().unique())
-    )
+        r3 = st.columns(4)
+        f_native = r3[0].selectbox("Native American lands", ["Any", "Yes", "No"])
+        f_lowinc = r3[1].selectbox("Low income community", ["Any", "Yes", "No"])
+        f_coalec = r3[2].selectbox("Retired-coal energy community", ["Any", "Yes", "No"])
+        f_incent = r3[3].multiselect("Incentive (PTC/ITC)",
+                                     sorted(g["PTC/ITC"].dropna().unique())
+                                     if "PTC/ITC" in g.columns else [], default=[])
 
-    only_opp = c3.toggle(
-        "Opportunities only",
-        value=False
-    )
+        r4 = st.columns(4)
+        f_contract = r4[0].selectbox("Contract", ["Any", "Has offtaker", "No offtaker"])
+        f_signal = r4[1].selectbox("External distress signal", ["Any", "With signal", "Without"])
+        f_btm = r4[2].selectbox("Behind the meter", ["Any", "Yes", "No"])
+        only_opp = r4[3].toggle("Opportunities only", value=False)
 
-    show_restricted_pois = st.toggle(
-        "Show restricted POIs",
-        value=True
-    )
+        st.markdown("**Layers**")
+        l = st.columns(5)
+        show_nofar = l[0].toggle("Nofar sites", value=True)
+        show_dc = l[1].toggle("Data centers", value=True)
+        show_thermal = l[2].toggle("Retiring thermal", value=True)
+        show_circles = l[3].toggle("Radius circles", value=True)
+        show_restricted_pois = l[4].toggle("Restricted POIs", value=False)
 
-    show_nofar = st.toggle(
-        "Show Nofar sites",
-        value=True
-    )
+    # ---------- apply filters ----------
+    mm = g.dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"]).copy()
+    mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
+    mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
 
-    # Asset/project data
-    mm = g[
-        g["State"].isin(stt)
-        & g["Technology"].isin(tech)
-    ].dropna(
-        subset=[
-            "Latitude (Degrees)",
-            "Longitude (Degrees)"
-        ]
-    ).copy()
+    def _yn(frame, col, choice):
+        """Filter a boolean-ish column by a Yes/No/Any selector."""
+        if choice == "Any" or col not in frame.columns:
+            return frame
+        truthy = frame[col].astype(str).str.strip().str.lower().isin(
+            ["true", "yes", "y", "1"])
+        return frame[truthy] if choice == "Yes" else frame[~truthy]
 
-    mm = mm.merge(
-        top[
-            [
-                "Generator ID",
-                "Opportunity Score"
-            ]
-        ],
-        on="Generator ID",
-        how="left"
-    )
-
-    mm["Opportunity Score"] = (
-        mm["Opportunity Score"]
-        .fillna(0)
-    )
-
-    mm["Category"] = np.where(
-        mm["Opportunity Score"]
-        >= max(THRESHOLD, 1e-9),
-        "Opportunity",
-        "No signal"
-    )
-
+    if f_state:  mm = mm[mm["State"].isin(f_state)]
+    if f_ba and "Balancing Authority Code" in mm.columns:
+        mm = mm[mm["Balancing Authority Code"].isin(f_ba)]
+    if f_type:
+        _tcol = "Power Project Type" if "Power Project Type" in mm.columns else "Technology"
+        mm = mm[mm[_tcol].isin(f_type)]
+    if f_status:   mm = mm[mm["Detailed Status"].isin(f_status)]
+    if f_owner:    mm = mm[mm["Owner"].isin(f_owner)]
+    if f_incent and "PTC/ITC" in mm.columns:
+        mm = mm[mm["PTC/ITC"].isin(f_incent)]
+    mm = mm[mm["Capacity (MW)"].between(f_mw[0], f_mw[1])]
+    mm = mm[mm["Opportunity Score"] >= f_score]
+    mm = _yn(mm, "Native American Lands", f_native)
+    mm = _yn(mm, "Low Income Communities", f_lowinc)
+    mm = _yn(mm, "Retired Coal Facilities Energy Communities", f_coalec)
+    mm = _yn(mm, "Behind the Meter", f_btm)
+    if f_contract == "Has offtaker":
+        mm = mm[mm["Contract Offtaker"].notna()]
+    elif f_contract == "No offtaker":
+        mm = mm[mm["Contract Offtaker"].isna()]
+    if f_signal != "Any" and isinstance(provenance, pd.DataFrame) and len(provenance) \
+            and "Generator ID" in provenance.columns:
+        flagged = set(provenance["Generator ID"])
+        mm = mm[mm["Generator ID"].isin(flagged)] if f_signal == "With signal" \
+            else mm[~mm["Generator ID"].isin(flagged)]
     if only_opp:
-        mm = mm[
-            mm["Category"] != "No signal"
-        ].copy()
+        mm = mm[mm["Opportunity Score"] >= max(THRESHOLD, 1e-9)]
 
-    # Base Asset Map
-    fig = px.scatter_mapbox(
-        mm,
-        lat="Latitude (Degrees)",
-        lon="Longitude (Degrees)",
-        size="Capacity (MW)",
-        color="Category",
-        color_discrete_map={
-            "No signal": "#C7C4D9",
-            "Opportunity": INDIGO
-        },
-        hover_name="Power Project Name",
-        hover_data={
-            "County": True,
-            "Detailed Status": True,
-            "Opportunity Score": ":.1f",
-            "Capacity (MW)": ":.1f",
-            "Latitude (Degrees)": False,
-            "Longitude (Degrees)": False
-        },
-        zoom=6.2,
-        height=650
-    )
+    # ---------- colour dimension ----------
+    TECH_COLOURS = {"Solar": "#F4C843", "Storage": "#4A2EE3", "Wind": "#25B6A6",
+                    "Natural Gas": "#E8743B", "Coal": "#6B668F",
+                    "Solar PV": "#F4C843", "Storage/Hybrid": "#4A2EE3"}
+    if color_by == "Technology":
+        ccol = "Power Project Type" if "Power Project Type" in mm.columns else "Technology"
+        cmap = TECH_COLOURS
+    elif color_by == "Status":
+        ccol, cmap = "Detailed Status", None
+    elif color_by == "Balancing authority":
+        ccol, cmap = "Balancing Authority Code", None
+    elif color_by == "Parent company":
+        ccol, cmap = "Parent Company", None
+    else:
+        mm["Opportunity"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9),
+                                     "Opportunity", "No signal")
+        ccol, cmap = "Opportunity", {"No signal": "#C7C4D9", "Opportunity": INDIGO}
 
-    fig.update_layout(
-        mapbox_style="open-street-map",
-        margin=dict(
-            l=0,
-            r=0,
-            t=0,
-            b=0
-        ),
-        font_family="Inter",
-        legend_title_text="Map layers"
-    )
+    st.caption(f"{len(mm)} projects shown · {mm['Capacity (MW)'].sum():,.0f} MW")
 
-    # Nofar sites
-    fig = add_nofar_layer(
-        fig,
-        show_nofar
-    )
+    if mm.empty:
+        st.warning("No projects match these filters.")
+    else:
+        _hover = {c: True for c in ["County", "State", "Detailed Status", "Owner",
+                                    "Balancing Authority Code", "PTC/ITC"]
+                  if c in mm.columns}
+        _hover.update({"Opportunity Score": ":.1f", "Capacity (MW)": ":.1f",
+                       "Latitude (Degrees)": False, "Longitude (Degrees)": False})
+        fig = px.scatter_mapbox(
+            mm, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
+            size="Capacity (MW)", size_max=26, color=ccol,
+            color_discrete_map=cmap or {},
+            hover_name="Power Project Name", hover_data=_hover,
+            zoom=5.4, height=680)
+        fig.update_layout(mapbox_style="open-street-map",
+                          margin=dict(l=0, r=0, t=0, b=0), font_family="Inter",
+                          legend_title_text=color_by,
+                          legend=dict(bgcolor="rgba(255,255,255,0.85)"))
 
-    # Restricted POIs
-    if show_restricted_pois:
+        # ---- data-center layer ----
+        if show_dc:
+            _dcf = DATA / "data_centers.parquet"
+            if _dcf.exists():
+                _dc = pd.read_parquet(_dcf)
+                _dc = _dc.dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
+                if f_state:
+                    _dc = _dc[_dc["State"].isin(f_state)] if "State" in _dc.columns else _dc
+                if len(_dc):
+                    _mwd = pd.to_numeric(_dc.get("Power Capacity (MW)"), errors="coerce").fillna(1)
+                    fig.add_trace(go.Scattermapbox(
+                        lat=_dc["Latitude (Degrees)"], lon=_dc["Longitude (Degrees)"],
+                        mode="markers", name="Data centers",
+                        marker=dict(size=(8 + 14 * (_mwd / max(_mwd.max(), 1))).clip(6, 26),
+                                    color="#00A3FF", opacity=0.75),
+                        text=_dc.get("Name", ""),
+                        hovertemplate="<b>%{text}</b><br>Data center<extra></extra>"))
 
-        restricted_pois = D.get(
-            "red_zone",
-            pd.DataFrame()
-        ).copy()
+        # ---- retiring thermal layer + radius circles ----
+        if show_thermal and "Is Thermal" in G_ALL.columns:
+            _th = G_ALL[G_ALL["Is Thermal"].fillna(False)].dropna(
+                subset=["Latitude (Degrees)", "Longitude (Degrees)"])
+            if "Retirement Year" in _th.columns:
+                _th = _th[_th["Retirement Year"] >= TH_YR]
+            if f_state and "State" in _th.columns:
+                _th = _th[_th["State"].isin(f_state)]
+            if TH_TY and "Power Project Type" in _th.columns:
+                _th = _th[_th["Power Project Type"].isin(TH_TY)]
+            if len(_th):
+                fig.add_trace(go.Scattermapbox(
+                    lat=_th["Latitude (Degrees)"], lon=_th["Longitude (Degrees)"],
+                    mode="markers", name=f"Retiring thermal (≥{TH_YR})",
+                    marker=dict(size=13, color="#E8743B", opacity=0.9, symbol="circle"),
+                    text=_th["Power Project Name"] + " · "
+                         + _th["Power Project Type"].astype(str) + " · "
+                         + _th["Retirement Year"].astype("Int64").astype(str),
+                    hovertemplate="<b>%{text}</b><extra></extra>"))
+                if show_circles:
+                    for _, _t in _th.head(60).iterrows():
+                        _la, _lo = geo_signals.circle_polygon(
+                            _t["Latitude (Degrees)"], _t["Longitude (Degrees)"], TH_R)
+                        fig.add_trace(go.Scattermapbox(
+                            lat=_la, lon=_lo, mode="lines", fill="toself",
+                            fillcolor="rgba(232,116,59,0.08)",
+                            line=dict(color="rgba(232,116,59,0.45)"),
+                            hoverinfo="skip", showlegend=False))
 
-        if restricted_pois.empty:
-            st.warning(
-                "The red_zone dataset is empty."
-            )
+        fig = add_nofar_layer(fig, show_nofar)
 
-        else:
-            column_lookup = {
-                str(column).strip().lower(): column
-                for column in restricted_pois.columns
-            }
-
-            latitude_candidates = [
-                "latitude",
-                "lat",
-                "latitude (degrees)",
-                "poi latitude",
-                "substation latitude"
-            ]
-
-            longitude_candidates = [
-                "longitude",
-                "lon",
-                "lng",
-                "long",
-                "longitude (degrees)",
-                "poi longitude",
-                "substation longitude"
-            ]
-
-            name_candidates = [
-                "poi",
-                "poi name",
-                "restricted poi",
-                "substation",
-                "substation name",
-                "station",
-                "station name",
-                "name"
-            ]
-
-            latitude_column = next(
-                (
-                    column_lookup[name]
-                    for name in latitude_candidates
-                    if name in column_lookup
-                ),
-                None
-            )
-
-            longitude_column = next(
-                (
-                    column_lookup[name]
-                    for name in longitude_candidates
-                    if name in column_lookup
-                ),
-                None
-            )
-
-            name_column = next(
-                (
-                    column_lookup[name]
-                    for name in name_candidates
-                    if name in column_lookup
-                ),
-                None
-            )
-
-            if (
-                latitude_column is None
-                or longitude_column is None
-            ):
-                st.error(
-                    "The red_zone file does not contain recognizable "
-                    "latitude and longitude columns."
-                )
-
-                st.write(
-                    "Columns found:",
-                    restricted_pois.columns.tolist()
-                )
-
+        # ---- restricted POIs (NC/SC Duke data only) ----
+        if show_restricted_pois:
+            _rz = D.get("red_zone", pd.DataFrame()).copy()
+            if _rz.empty:
+                st.caption("No restricted-POI dataset loaded (Duke NC/SC only).")
             else:
-                restricted_pois[latitude_column] = pd.to_numeric(
-                    restricted_pois[latitude_column],
-                    errors="coerce"
-                )
-
-                restricted_pois[longitude_column] = pd.to_numeric(
-                    restricted_pois[longitude_column],
-                    errors="coerce"
-                )
-
-                restricted_pois = restricted_pois.dropna(
-                    subset=[
-                        latitude_column,
-                        longitude_column
-                    ]
-                ).copy()
-
-                if name_column is None:
-                    restricted_pois["_poi_name"] = "Restricted POI"
-                    name_column = "_poi_name"
-
-                if restricted_pois.empty:
-                    st.warning(
-                        "No restricted POIs have valid coordinates."
-                    )
-
+                _lk = {str(c).strip().lower(): c for c in _rz.columns}
+                _latc = next((_lk[n] for n in ["latitude", "lat", "latitude (degrees)"]
+                              if n in _lk), None)
+                _lonc = next((_lk[n] for n in ["longitude", "lon", "lng", "long",
+                                               "longitude (degrees)"] if n in _lk), None)
+                _namc = next((_lk[n] for n in ["substation", "substation name", "poi",
+                                               "poi name", "name"] if n in _lk), None)
+                if _latc and _lonc:
+                    _rz = _rz.dropna(subset=[_latc, _lonc])
+                    fig.add_trace(go.Scattermapbox(
+                        lat=_rz[_latc], lon=_rz[_lonc], mode="markers",
+                        name="Restricted POIs",
+                        marker=dict(size=11, color="#D7263D", symbol="triangle"),
+                        text=_rz[_namc] if _namc else "",
+                        hovertemplate="<b>%{text}</b><br>Restricted POI<extra></extra>"))
                 else:
-                    poi_hover_data = restricted_pois[
-                        [
-                            name_column,
-                            latitude_column,
-                            longitude_column
-                        ]
-                    ].to_numpy()
-                    # Large red marker for every restricted POI.
-                    # The red circle guarantees that the POI remains visible.
-                    fig.add_trace(
-                        go.Scattermapbox(
-                            lat=restricted_pois[latitude_column],
-                            lon=restricted_pois[longitude_column],
-                    
-                            # Red circle plus white triangle.
-                            mode="markers+text",
-                    
-                            marker=dict(
-                                size=22,
-                                color="#FF0000",
-                                opacity=1.0
-                            ),
-                    
-                            text=[
-                                "▲"
-                                for _ in range(len(restricted_pois))
-                            ],
-                    
-                            textposition="middle center",
-                    
-                            textfont=dict(
-                                color="#FFFFFF",
-                                size=12,
-                                family="Arial Black"
-                            ),
-                    
-                            name="Restricted POI",
-                    
-                            customdata=poi_hover_data,
-                    
-                            hovertemplate=(
-                                "<b>%{customdata[0]}</b><br>"
-                                "<b>Restricted POI</b><br>"
-                                "Latitude: %{customdata[1]:.5f}<br>"
-                                "Longitude: %{customdata[2]:.5f}"
-                                "<extra></extra>"
-                            ),
-                    
-                            showlegend=True
-                        )
-                    )
-    st.caption(
-        f"Displaying {len(restricted_pois)} restricted POIs "
-        "as red markers on the Asset Map."
-    )
+                    st.caption("Restricted-POI file has no coordinate columns.")
 
-    # This displays the Asset Map, not the Withdrawals map
-    st.plotly_chart(
-        fig,
-        use_container_width=True,
-        config={
-            "displayModeBar": False
-        }
-    )
+        st.plotly_chart(fig, use_container_width=True,
+                        config={"displayModeBar": True, "scrollZoom": True})
+
+        with st.expander(f"📄 Table of the {len(mm)} projects shown"):
+            _cols = [c for c in ["Power Project Name", "Power Project Type", "Capacity (MW)",
+                                 "Detailed Status", "Owner", "Parent Company", "County",
+                                 "State", "Balancing Authority Code", "PTC/ITC",
+                                 "Native American Lands", "Opportunity Score"]
+                     if c in mm.columns]
+            st.dataframe(mm[_cols].sort_values("Opportunity Score", ascending=False),
+                         hide_index=True, use_container_width=True, height=380)
+
 
 # ─────────────────────────────── WITHDRAWALS
 with tab_withdrawals:
@@ -1289,7 +1210,7 @@ with tab_date_updates:
             ws = web_signals.scan_web_signals(g, ownership)
             ws.to_parquet(f"{DATA}/web_signals.parquet", index=False)
         st.cache_data.clear(); st.rerun()
-    if st.button("🧭 Update distress (entities → CourtListener + news + liens + county)"):
+    if st.button("🧭 Update distress signals (entities → CourtListener + news + liens + county)"):
         with st.spinner("Building entity list and scanning distress sources..."):
             fetch_distress()
         st.cache_data.clear(); st.rerun()

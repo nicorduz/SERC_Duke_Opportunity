@@ -469,6 +469,14 @@ DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
 THRESHOLD = st.session_state.get("thr", 0.5)
 top = engine.composite_score(g, scr, weights, THRESHOLD)
+# Guarantee the columns the tables reference exist even when nothing scored,
+# so an empty result renders an empty table instead of raising KeyError.
+if top.empty:
+    for _c in ["Power Project Name", "County", "State", "Capacity (MW)",
+               "Detailed Status", "Opportunity Score", "Why", "Generator ID",
+               "Latitude (Degrees)", "Longitude (Degrees)", "_fired"]:
+        if _c not in top.columns:
+            top[_c] = pd.Series(dtype="object")
 media_df = pd.read_parquet(f"{DATA}/media.parquet") if os.path.exists(f"{DATA}/media.parquet") else None
 cl_df = pd.read_parquet(f"{DATA}/courtlistener.parquet") if os.path.exists(f"{DATA}/courtlistener.parquet") else None
 ownership = distress_scan.build_ownership(g, D.get("eia"))
@@ -660,8 +668,20 @@ st.markdown(f"""
     "Team Hub",
 ])
 
+# Column formatting for the tables.
+# NOTE: max_value must never be NaN — Streamlit cannot serialize it to JSON and
+# raises StreamlitAPIException. `float(x or 8)` is NOT safe here because NaN is
+# truthy in Python, so an empty `top` would leak NaN straight through.
+def _score_ceiling(frame, col="Opportunity Score", default=8.0):
+    try:
+        v = float(pd.to_numeric(frame[col], errors="coerce").max())
+    except Exception:
+        return default
+    return v if np.isfinite(v) and v > 0 else default
+
 FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
-       "Opportunity Score": st.column_config.ProgressColumn("Score", min_value=0, max_value=float(top["Opportunity Score"].max() or 8), format="%.1f"),
+       "Opportunity Score": st.column_config.ProgressColumn(
+           "Score", min_value=0, max_value=_score_ceiling(top), format="%.1f"),
        "CF (12m)": st.column_config.NumberColumn("CF 12m", format="percent"),
        "Age (yrs)": st.column_config.NumberColumn("Age", format="%.0f y")}
 
@@ -670,9 +690,15 @@ with tab_dashboard:
     a, b = st.columns([3, 2])
     with a:
         st.markdown('<div class="sect">Top opportunities</div><div class="sub">Composite of nine screens — every point decomposes in the Why column.</div>', unsafe_allow_html=True)
-        st.dataframe(top[["Power Project Name", "County", "State", "Capacity (MW)",
-                          "Detailed Status", "Opportunity Score", "Why"]].head(25),
-                     use_container_width=True, height=430, column_config=FMT, hide_index=True)
+        if top.empty:
+            st.info("No project scored above the current threshold. Lower it in "
+                    "**Score & Methodology**, widen the Universe in the sidebar, or run "
+                    "**Update distress signals** in Data & Updates to bring in signals.")
+        else:
+            st.dataframe(top[["Power Project Name", "County", "State", "Capacity (MW)",
+                              "Detailed Status", "Opportunity Score", "Why"]].head(25),
+                         use_container_width=True, height=430,
+                         column_config=FMT, hide_index=True)
     with b:
         st.markdown('<div class="sect">Where the signals are</div><div class="sub">Hits per screen (a project can fire several).</div>', unsafe_allow_html=True)
         counts = {"QF roll-up": len(scr["qf_rollup"]), "Contract cliff": len(scr["contract_cliff"]),
@@ -710,127 +736,134 @@ with tab_targets_playbooks:
         _st_opts = sorted(g["State"].dropna().unique())
         stt = f1.multiselect("State", _st_opts, default=_st_opts, label_visibility="collapsed")
         minmw = f2.slider("Min MW", 0.0, 80.0, 0.0, 1.0, label_visibility="collapsed")
-        tt = top[top["State"].isin(stt) & (top["Capacity (MW)"] >= minmw)]
-        sel = st.selectbox("Target", tt["Generator ID"].head(80),
-                           format_func=lambda i: (lambda r: f"{r['Power Project Name']} · {r['County']} {r['State']} · {r['Capacity (MW)']:.0f} MW · ★{r['Opportunity Score']:.1f}")(tt.set_index("Generator ID").loc[i]),
-                           label_visibility="collapsed")
-        row = pd.concat([pd.Series({"Generator ID": sel}), top.set_index("Generator ID").loc[sel]])
-        badges = "".join(f'<span class="badge b-sig">{s.replace("_"," ")}</span>' for s in row["_fired"] if s != "county_risk")
-        if "county_risk" in row["_fired"]: badges += '<span class="badge b-warn">county risk</span>'
-        own = scr.get("_owner_map", {}).get(sel)
-        st.markdown(f"""<div class="card">
-<b style="font-family:'Space Grotesk';font-size:19px">{row['Power Project Name']}</b><br>
-<span class="sub">{row['County']} County, {row['State']} · {row['Technology']}</span><br>{badges}
-<table style="width:100%;font-size:13.5px;margin-top:8px">
-<tr><td style="color:#6B668F">Capacity</td><td><b>{row['Capacity (MW)']:.1f} MW AC</b> {f"/ {row['DC Capacity (MW)']:.1f} DC" if pd.notna(row['DC Capacity (MW)']) else ""}</td></tr>
-<tr><td style="color:#6B668F">Status</td><td>{row['Detailed Status']}</td></tr>
-<tr><td style="color:#6B668F">Owner (EIA)</td><td>{own or "unknown — step 1 of playbook"}</td></tr>
-<tr><td style="color:#6B668F">Age</td><td>{row['Age (yrs)'] if pd.notna(row['Age (yrs)']) else '—'} yrs</td></tr>
-<tr><td style="color:#6B668F">CF (12m / fcst)</td><td>{f"{row['CF (12m)']*100:.1f}%" if pd.notna(row['CF (12m)']) else '—'} / {f"{row['CF (fcst 10y)']*100:.1f}%" if pd.notna(row['CF (fcst 10y)']) else '—'}</td></tr>
-<tr><td style="color:#6B668F">Contract</td><td>{f"{row['Contract Price ($/MWh)']:.0f} $/MWh" if pd.notna(row['Contract Price ($/MWh)']) else '—'}{f" · ends {str(row['Contract Termination Date'])[:10]}" if pd.notna(row['Contract Termination Date']) else ""}</td></tr>
-<tr><td style="color:#6B668F">Queue</td><td>{row['Queue ID'] if pd.notna(row['Queue ID']) else '—'} · {row['Queue Cycle'] if pd.notna(row['Queue Cycle']) else ''}</td></tr>
-<tr><td style="color:#6B668F">Why flagged</td><td>{row['Why']}</td></tr>
-</table></div>""", unsafe_allow_html=True)
+        tt = top[top["State"].isin(stt) & (top["Capacity (MW)"] >= minmw)] if len(top) \
+             else top
+        if tt.empty:
+            # Do NOT call st.stop(): that would abort every other tab too.
+            st.info("No targets match the current filters or threshold. "
+                    "Lower the threshold in Score & Methodology or widen the Universe.")
+        if not tt.empty:
+            sel = st.selectbox("Target", tt["Generator ID"].head(80),
+                               format_func=lambda i: (lambda r: f"{r['Power Project Name']} · {r['County']} {r['State']} · {r['Capacity (MW)']:.0f} MW · ★{r['Opportunity Score']:.1f}")(tt.set_index("Generator ID").loc[i]),
+                               label_visibility="collapsed")
+            row = pd.concat([pd.Series({"Generator ID": sel}), top.set_index("Generator ID").loc[sel]])
+            badges = "".join(f'<span class="badge b-sig">{s.replace("_"," ")}</span>' for s in row["_fired"] if s != "county_risk")
+            if "county_risk" in row["_fired"]: badges += '<span class="badge b-warn">county risk</span>'
+            own = scr.get("_owner_map", {}).get(sel)
+            st.markdown(f"""<div class="card">
+    <b style="font-family:'Space Grotesk';font-size:19px">{row['Power Project Name']}</b><br>
+    <span class="sub">{row['County']} County, {row['State']} · {row['Technology']}</span><br>{badges}
+    <table style="width:100%;font-size:13.5px;margin-top:8px">
+    <tr><td style="color:#6B668F">Capacity</td><td><b>{row['Capacity (MW)']:.1f} MW AC</b> {f"/ {row['DC Capacity (MW)']:.1f} DC" if pd.notna(row['DC Capacity (MW)']) else ""}</td></tr>
+    <tr><td style="color:#6B668F">Status</td><td>{row['Detailed Status']}</td></tr>
+    <tr><td style="color:#6B668F">Owner (EIA)</td><td>{own or "unknown — step 1 of playbook"}</td></tr>
+    <tr><td style="color:#6B668F">Age</td><td>{row['Age (yrs)'] if pd.notna(row['Age (yrs)']) else '—'} yrs</td></tr>
+    <tr><td style="color:#6B668F">CF (12m / fcst)</td><td>{f"{row['CF (12m)']*100:.1f}%" if pd.notna(row['CF (12m)']) else '—'} / {f"{row['CF (fcst 10y)']*100:.1f}%" if pd.notna(row['CF (fcst 10y)']) else '—'}</td></tr>
+    <tr><td style="color:#6B668F">Contract</td><td>{f"{row['Contract Price ($/MWh)']:.0f} $/MWh" if pd.notna(row['Contract Price ($/MWh)']) else '—'}{f" · ends {str(row['Contract Termination Date'])[:10]}" if pd.notna(row['Contract Termination Date']) else ""}</td></tr>
+    <tr><td style="color:#6B668F">Queue</td><td>{row['Queue ID'] if pd.notna(row['Queue ID']) else '—'} · {row['Queue Cycle'] if pd.notna(row['Queue Cycle']) else ''}</td></tr>
+    <tr><td style="color:#6B668F">Why flagged</td><td>{row['Why']}</td></tr>
+    </table></div>""", unsafe_allow_html=True)
 
-        # >>> NOFAR-ADD: full attribute sheet from the merged Orennia exports
-        _ATTR_GROUPS = {
-            "Identification": ["Generator ID", "Generator Name", "Owner", "Parent Company",
-                               "Parent Company 2", "EIA Plant ID", "EIA Generator ID",
-                               "EIA Unit Code", "FERC Docket ID"],
-            "Equipment & technology": ["Power Project Type", "Equipment Manufacturer",
-                                    "Equipment Model", "Panel Type", "Battery Type",
-                                    "Storage Duration (Hours)", "Storage Energy Rating (MWh)",
-                                    "Number of Turbines (Number)", "Wind Turbine Capacity (kW)",
-                                    "Capex Per Watt ($/W)", "EPC"],
-            "Incentives & siting": ["PTC/ITC", "Native American Lands",
-                                    "Low Income Communities",
-                                    "Retired Coal Facilities Energy Communities",
-                                    "Behind the Meter", "CCUS Status"],
-            "Interconnection": ["Balancing Authority Code", "ISO", "Transmission Owner",
-                              "Point of Interconnection", "Connection Voltage (kV)",
-                              "Queue ID", "Queue Cycle", "Queue Date",
-                              "Interconnection Service Type",
-                              "Interconnection Cost Total ($)", "IX Cost $/kW"],
-            "Contract": ["Contract Type", "Contract Offtaker", "Contract Offtaker Type",
-                         "Contract Price Type", "Contract Price ($/MWh)",
-                         "Contract Price ($/kW-month)", "Contract Capacity (MW)",
-                         "Contract Term Years (Year)", "Contract Execution Date",
-                         "Contract Termination Date", "Contract Delivery Location"],
-            "Dates & performance": ["Power Project Status", "Detailed Status",
-                                   "Chance of Success (Percentage)", "IRR (Percentage)",
-                                   "First Power Date", "Reported First Power Date",
-                                   "Estimated Retirement Date", "Reported Retirement Date",
-                                   "Repowered", "Repower Date", "Lifetime Capacity Factor",
-                                   "CF (12m)", "CF (prev 12m)", "CF Trend (pp)",
-                                   "CF (fcst 10y)", "Has Generation History"],
-        }
-        with st.expander("📋 Full project sheet (all Orennia fields)"):
-            _hide_empty = st.checkbox("Hide empty fields", value=True, key=f"he_{sel}")
-            for _grp, _cols in _ATTR_GROUPS.items():
-                _rows = []
-                for _c in _cols:
-                    if _c not in row.index:
-                        continue
-                    _v = row[_c]
-                    _empty = pd.isna(_v) or str(_v).strip() in ("", "nan", "NaT")
-                    if _empty and _hide_empty:
-                        continue
-                    if isinstance(_v, pd.Timestamp):
-                        _v = _v.strftime("%Y-%m-%d")
-                    _rows.append({"Field": _c, "Value": "—" if _empty else str(_v)})
-                if _rows:
-                    st.markdown(f"**{_grp}**")
-                    st.dataframe(pd.DataFrame(_rows), hide_index=True,
-                                 use_container_width=True, height=min(35 * len(_rows) + 38, 320))
-        # <<< NOFAR-ADD
+            # >>> NOFAR-ADD: full attribute sheet from the merged Orennia exports
+            _ATTR_GROUPS = {
+                "Identification": ["Generator ID", "Generator Name", "Owner", "Parent Company",
+                                   "Parent Company 2", "EIA Plant ID", "EIA Generator ID",
+                                   "EIA Unit Code", "FERC Docket ID"],
+                "Equipment & technology": ["Power Project Type", "Equipment Manufacturer",
+                                        "Equipment Model", "Panel Type", "Battery Type",
+                                        "Storage Duration (Hours)", "Storage Energy Rating (MWh)",
+                                        "Number of Turbines (Number)", "Wind Turbine Capacity (kW)",
+                                        "Capex Per Watt ($/W)", "EPC"],
+                "Incentives & siting": ["PTC/ITC", "Native American Lands",
+                                        "Low Income Communities",
+                                        "Retired Coal Facilities Energy Communities",
+                                        "Behind the Meter", "CCUS Status"],
+                "Interconnection": ["Balancing Authority Code", "ISO", "Transmission Owner",
+                                  "Point of Interconnection", "Connection Voltage (kV)",
+                                  "Queue ID", "Queue Cycle", "Queue Date",
+                                  "Interconnection Service Type",
+                                  "Interconnection Cost Total ($)", "IX Cost $/kW"],
+                "Contract": ["Contract Type", "Contract Offtaker", "Contract Offtaker Type",
+                             "Contract Price Type", "Contract Price ($/MWh)",
+                             "Contract Price ($/kW-month)", "Contract Capacity (MW)",
+                             "Contract Term Years (Year)", "Contract Execution Date",
+                             "Contract Termination Date", "Contract Delivery Location"],
+                "Dates & performance": ["Power Project Status", "Detailed Status",
+                                       "Chance of Success (Percentage)", "IRR (Percentage)",
+                                       "First Power Date", "Reported First Power Date",
+                                       "Estimated Retirement Date", "Reported Retirement Date",
+                                       "Repowered", "Repower Date", "Lifetime Capacity Factor",
+                                       "CF (12m)", "CF (prev 12m)", "CF Trend (pp)",
+                                       "CF (fcst 10y)", "Has Generation History"],
+            }
+            with st.expander("📋 Full project sheet (all Orennia fields)"):
+                _hide_empty = st.checkbox("Hide empty fields", value=True, key=f"he_{sel}")
+                for _grp, _cols in _ATTR_GROUPS.items():
+                    _rows = []
+                    for _c in _cols:
+                        if _c not in row.index:
+                            continue
+                        _v = row[_c]
+                        _empty = pd.isna(_v) or str(_v).strip() in ("", "nan", "NaT")
+                        if _empty and _hide_empty:
+                            continue
+                        if isinstance(_v, pd.Timestamp):
+                            _v = _v.strftime("%Y-%m-%d")
+                        _rows.append({"Field": _c, "Value": "—" if _empty else str(_v)})
+                    if _rows:
+                        st.markdown(f"**{_grp}**")
+                        st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                                     use_container_width=True, height=min(35 * len(_rows) + 38, 320))
+            # <<< NOFAR-ADD
 
-        if pd.notna(row["Latitude (Degrees)"]):
-            mf = px.scatter_mapbox(pd.DataFrame([{"lat": row["Latitude (Degrees)"], "lon": row["Longitude (Degrees)"],
-                                                  "n": row["Power Project Name"], "mw": row["Capacity (MW)"]}]),
-                                   lat="lat", lon="lon", size="mw", hover_name="n",
-                                   color_discrete_sequence=[INDIGO], zoom=9, height=230)
-            mf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
-            mf = add_nofar_layer(mf, True)
-            # NOFAR-ADD: radius circles around retiring thermal plants near this target
-            if isinstance(TH_DET, pd.DataFrame) and len(TH_DET) and "Generator ID" in TH_DET.columns:
-                for _, _t in TH_DET[TH_DET["Generator ID"] == sel].iterrows():
-                    _la, _lo = geo_signals.circle_polygon(_t["lat"], _t["lon"], TH_R)
-                    mf.add_trace(go.Scattermapbox(lat=_la, lon=_lo, mode="lines", fill="toself",
-                        fillcolor="rgba(244,200,67,0.10)", line=dict(color="rgba(244,200,67,0.55)"),
-                        hoverinfo="skip", showlegend=False))
-            st.plotly_chart(mf, use_container_width=True, config={"displayModeBar": False})
-        mo = D["m"][D["m"]["Generator ID"] == sel].sort_values("Date").tail(36)
-        if len(mo) > 3:
-            sp = px.area(mo, x="Date", y="Capacity Factor (Number)", color_discrete_sequence=[INDIGO])
-            sp.update_layout(height=150, margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
-                             font_family="Inter", yaxis_tickformat=".0%", yaxis_title=None, xaxis_title=None)
-            sp.update_traces(line_width=2)
-            st.markdown('<div class="sub">Monthly capacity factor (last 36m actuals)</div>', unsafe_allow_html=True)
-            st.plotly_chart(sp, use_container_width=True, config={"displayModeBar": False})
+            if pd.notna(row["Latitude (Degrees)"]):
+                mf = px.scatter_mapbox(pd.DataFrame([{"lat": row["Latitude (Degrees)"], "lon": row["Longitude (Degrees)"],
+                                                      "n": row["Power Project Name"], "mw": row["Capacity (MW)"]}]),
+                                       lat="lat", lon="lon", size="mw", hover_name="n",
+                                       color_discrete_sequence=[INDIGO], zoom=9, height=230)
+                mf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
+                mf = add_nofar_layer(mf, True)
+                # NOFAR-ADD: radius circles around retiring thermal plants near this target
+                if isinstance(TH_DET, pd.DataFrame) and len(TH_DET) and "Generator ID" in TH_DET.columns:
+                    for _, _t in TH_DET[TH_DET["Generator ID"] == sel].iterrows():
+                        _la, _lo = geo_signals.circle_polygon(_t["lat"], _t["lon"], TH_R)
+                        mf.add_trace(go.Scattermapbox(lat=_la, lon=_lo, mode="lines", fill="toself",
+                            fillcolor="rgba(244,200,67,0.10)", line=dict(color="rgba(244,200,67,0.55)"),
+                            hoverinfo="skip", showlegend=False))
+                st.plotly_chart(mf, use_container_width=True, config={"displayModeBar": False})
+            mo = D["m"][D["m"]["Generator ID"] == sel].sort_values("Date").tail(36)
+            if len(mo) > 3:
+                sp = px.area(mo, x="Date", y="Capacity Factor (Number)", color_discrete_sequence=[INDIGO])
+                sp.update_layout(height=150, margin=dict(l=0, r=0, t=4, b=0), plot_bgcolor="white",
+                                 font_family="Inter", yaxis_tickformat=".0%", yaxis_title=None, xaxis_title=None)
+                sp.update_traces(line_width=2)
+                st.markdown('<div class="sub">Monthly capacity factor (last 36m actuals)</div>', unsafe_allow_html=True)
+                st.plotly_chart(sp, use_container_width=True, config={"displayModeBar": False})
 
     with right:
-        st.markdown('<div class="sect">Action playbook</div><div class="sub">Exact link → what to do → what to verify → what we have vs lack.</div>', unsafe_allow_html=True)
-        ctx = engine.build_playbook_context(row, scr, D.get("duke_queue"), D.get("restrictions"), D.get("contested"))
-        for s in actions.generate_playbook(row, row["_fired"], ctx):
-            lk = f'<a href="{s["link"]}" target="_blank">{s["link"]}</a>' if s["link"] else "—"
-            st.markdown(f"""<div class="pstep"><div><div class="pnum">{s['step']}</div><div class="pline"></div></div>
-<div class="pbody"><b class="t">{s['title']}</b>
-<div class="row"><span class="k">Link</span> · {lk}</div>
-<div class="row"><span class="k">Do</span> · {s['do']}</div>
-<div class="row"><span class="k">Verify</span> · {s['verify']}</div>
-<div class="hl">{s['have_lack']}</div></div></div>""", unsafe_allow_html=True)
+        if not tt.empty:
+            st.markdown('<div class="sect">Action playbook</div><div class="sub">Exact link → what to do → what to verify → what we have vs lack.</div>', unsafe_allow_html=True)
+            ctx = engine.build_playbook_context(row, scr, D.get("duke_queue"), D.get("restrictions"), D.get("contested"))
+            for s in actions.generate_playbook(row, row["_fired"], ctx):
+                lk = f'<a href="{s["link"]}" target="_blank">{s["link"]}</a>' if s["link"] else "—"
+                st.markdown(f"""<div class="pstep"><div><div class="pnum">{s['step']}</div><div class="pline"></div></div>
+    <div class="pbody"><b class="t">{s['title']}</b>
+    <div class="row"><span class="k">Link</span> · {lk}</div>
+    <div class="row"><span class="k">Do</span> · {s['do']}</div>
+    <div class="row"><span class="k">Verify</span> · {s['verify']}</div>
+    <div class="hl">{s['have_lack']}</div></div></div>""", unsafe_allow_html=True)
 
-        st.divider()
-        _sig_here = provenance[provenance["Generator ID"] == sel] \
-            if len(provenance) and "Generator ID" in provenance.columns else None
-        if _sig_here is not None and len(_sig_here):
-            with st.expander(f"🔎 Distress signals ({len(_sig_here)}) — sources"):
-                st.dataframe(_sig_here[["match_type","signal_type","matched_on","title","date","source","url"]],
-                             hide_index=True, use_container_width=True,
-                             column_config={"url": st.column_config.LinkColumn("Source")})
-        if ai_assistant is not None:
-            ai_assistant.render_project_chat(row, _sig_here,
-                                             api_key=st.secrets.get("OPENAI_API_KEY"))
+            st.divider()
+            _sig_here = provenance[provenance["Generator ID"] == sel] \
+                if len(provenance) and "Generator ID" in provenance.columns else None
+            if _sig_here is not None and len(_sig_here):
+                with st.expander(f"🔎 Distress signals ({len(_sig_here)}) — sources"):
+                    st.dataframe(_sig_here[["match_type","signal_type","matched_on","title","date","source","url"]],
+                                 hide_index=True, use_container_width=True,
+                                 column_config={"url": st.column_config.LinkColumn("Source")})
+            if ai_assistant is not None:
+                ai_assistant.render_project_chat(row, _sig_here,
+                                                 api_key=st.secrets.get("OPENAI_API_KEY"))
 
 # ─────────────────────────────── MAP
 with tab_map:
@@ -858,7 +891,7 @@ with tab_map:
         _mwmax = int(np.nan_to_num(g["Capacity (MW)"].max(), nan=1000)) or 1000
         f_mw = r2[0].slider("Capacity (MW)", 0, _mwmax, (0, _mwmax))
         f_score = r2[1].slider("Min opportunity score", 0.0,
-                               float(max(top["Opportunity Score"].max() if len(top) else 10, 10)),
+                               float(max(_score_ceiling(top, default=10.0), 10.0)),
                                0.0, 0.5)
         _owner_opts = sorted(g["Owner"].dropna().unique()) if "Owner" in g.columns else []
         f_owner = r2[2].multiselect("Owner", _owner_opts, default=[])

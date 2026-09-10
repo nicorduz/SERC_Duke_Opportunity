@@ -1,4 +1,3 @@
-
 """
 Nofar SERC Deal Intelligence — Duke Carolinas (DEC + DEP) · professional MVP UI
 """
@@ -14,8 +13,27 @@ from pathlib import Path
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
-import scope, geo_signals, distress_sources, warn_live, lien_sources
-import auth, ai_assistant
+import scope, geo_signals, distress_sources
+
+# Optional modules: a missing file or dependency must NOT take the app down.
+# Each one degrades to a no-op and the affected feature simply says why.
+_MISSING = []
+try:
+    import warn_live
+except Exception as _e:
+    warn_live = None; _MISSING.append(f"warn_live ({_e})")
+try:
+    import lien_sources
+except Exception as _e:
+    lien_sources = None; _MISSING.append(f"lien_sources ({_e})")
+try:
+    import ai_assistant
+except Exception as _e:
+    ai_assistant = None; _MISSING.append(f"ai_assistant ({_e})")
+try:
+    import auth
+except Exception as _e:
+    auth = None; _MISSING.append(f"auth ({_e})")
 import team_hub
 @st.cache_data(show_spinner=False)
 def load_counties():
@@ -91,7 +109,7 @@ PALETTE  = [INDIGO, GOLD, "#8F7EF0", DEEP, "#C9C2F5"]
 st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
                    page_icon="assets/nofar_logo.png", initial_sidebar_state="collapsed")
 
-APP_USER = auth.require_login()  # blocks until login (bypasses if [auth] not configured)
+APP_USER = auth.require_login() if auth else "dev"  # bypasses if module/secrets missing
 
 def logo_b64():
     try:
@@ -414,6 +432,8 @@ else:
 G_ALL = g.copy()
 if "Is Thermal" in g.columns:
     g = g[~g["Is Thermal"].fillna(False)].reset_index(drop=True)
+if _MISSING:
+    st.sidebar.warning("Módulos opcionales no cargados:\n\n- " + "\n- ".join(_MISSING))
 st.sidebar.caption("Universo: " + scope.region_label(g)
                    + (f" · {int(G_ALL['Is Thermal'].sum())} térmicas (contexto)"
                       if "Is Thermal" in G_ALL.columns else ""))
@@ -552,6 +572,8 @@ def fetch_courtlistener():
 
 def fetch_warn_layoffs():
     """AUTOMATIC daily layoffs for all SERC states (WARN Firehose). Cached to parquet."""
+    if warn_live is None:
+        return pd.DataFrame()
     w = warn_live.fetch_warn_live(states=scope.SERC_STATES,
                                   api_key=st.secrets.get("WARN_API_KEY"))
     if len(w):
@@ -567,7 +589,7 @@ def fetch_distress():
     lien = distress_sources.fetch_liens_free(ent, courtlistener_token=st.secrets.get("COURTLISTENER_TOKEN"))
     # automatic layoffs (live) -> direct + ambient provenance
     wl   = fetch_warn_layoffs()
-    wprov = warn_live.to_provenance(wl, ent, g) if len(wl) else pd.DataFrame()
+    wprov = warn_live.to_provenance(wl, ent, g) if (warn_live and len(wl)) else pd.DataFrame()
     amb  = distress_sources.county_ambient(g, warn=_warn, duke_queue=D.get("duke_queue"),
                                            restrictions=D.get("restrictions"), contested=D.get("contested"))
     pp, prov = distress_sources.assemble(cl, news, lien, wprov, amb)
@@ -805,7 +827,9 @@ with tab_targets_playbooks:
                 st.dataframe(_sig_here[["match_type","signal_type","matched_on","title","date","source","url"]],
                              hide_index=True, use_container_width=True,
                              column_config={"url": st.column_config.LinkColumn("Fuente")})
-        ai_assistant.render_project_chat(row, _sig_here, api_key=st.secrets.get("OPENAI_API_KEY"))
+        if ai_assistant is not None:
+            ai_assistant.render_project_chat(row, _sig_here,
+                                             api_key=st.secrets.get("OPENAI_API_KEY"))
 
 # ─────────────────────────────── MAP
 with tab_map:

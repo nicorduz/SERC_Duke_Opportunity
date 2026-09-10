@@ -127,7 +127,8 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
 DEFAULT_WEIGHTS = {"dev_distress": 4, "duke_withdrawn_match": 3.5, "contract_cliff": 3,
                    "underperf": 3, "ix_burden": 2.5, "red_zone": 2.5, "qf_rollup": 2,
                    "retirement": 2, "late_stage": 1.5, "withdrawal_cluster": 1,
-                   "warn_county": 0.5, "county_risk": -1}
+                   "warn_county": 0.5, "county_risk": -1,
+                   "distress_external": 4.0, "thermal_retire": 2.0, "datacenter_prox": 1.5}
 WEIGHTS = DEFAULT_WEIGHTS  # retro-compatibilidad
 
 def composite_score(g, screens, weights=None, threshold=0.0):

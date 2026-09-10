@@ -51,15 +51,15 @@ def require_login():
     meta = st.secrets.get("auth_meta", {})
     st.markdown(f"### {meta.get('title', 'Sign in')}")
     with st.form("login_form", clear_on_submit=False):
-        u = st.text_input("User")
+        u = st.text_input("Username")
         p = st.text_input("Password", type="password")
-        ok = st.form_submit_button("Entrar")
+        ok = st.form_submit_button("Sign in")
     if ok:
         if _check(u.strip(), p):
             st.session_state["_auth_user"] = u.strip()
             st.rerun()
         else:
-            st.error("Usuario o contraseña incorrectos.")
+            st.error("Incorrect username or password.")
     st.stop()   # halt the rest of app.py until logged in
 
 

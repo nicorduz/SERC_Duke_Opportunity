@@ -13,6 +13,8 @@ from pathlib import Path
 
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
+import scope, geo_signals, distress_sources, warn_live, lien_sources
+import auth, ai_assistant
 import team_hub
 @st.cache_data(show_spinner=False)
 def load_counties():
@@ -87,6 +89,8 @@ PALETTE  = [INDIGO, GOLD, "#8F7EF0", DEEP, "#C9C2F5"]
 
 st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
                    page_icon="assets/nofar_logo.png", initial_sidebar_state="collapsed")
+
+APP_USER = auth.require_login()  # blocks until login (bypasses if [auth] not configured)
 
 def logo_b64():
     try:
@@ -389,10 +393,48 @@ D = load_all(
     file_signature(RED_ZONE_PATH)
 )
 g = D["g"]
+
+# >>> NOFAR-ADD: SERC-wide scope selector + geo-signal controls
+with st.sidebar:
+    st.markdown("### Universo")
+    _scope_mode = st.radio("Alcance", ["SERC (Non-ISO)", "Solo Duke NC/SC"], index=0, key="scope_mode")
+    with st.expander("Señales geográficas"):
+        TH_R  = st.slider("Radio térmicas (km)", 1, 50, 10)
+        TH_YR = st.slider("Retiro desde año", 2026, 2045, 2028)
+        TH_TY = st.multiselect("Tipo planta", ["Coal", "Gas"], default=["Coal", "Gas"])
+        DC_R  = st.slider("Radio data centers (km)", 1, 60, 20)
+if _scope_mode == "Solo Duke NC/SC":
+    g = scope.apply_scope(g, states=["NC", "SC"], duke_only=True)
+else:
+    g = scope.apply_scope(g, iso="Non-ISO")
+st.sidebar.caption("Universo: " + scope.region_label(g))
+# <<< NOFAR-ADD
+
 _warn = pd.concat([D[k] for k in ("warn_nc", "warn_sc") if k in D], ignore_index=True) \
         if any(k in D for k in ("warn_nc", "warn_sc")) else None
 scr = engine.opportunity_screens(g, D.get("eia"), D.get("duke_queue"), D.get("red_zone"),
                                  D.get("restrictions"), D.get("contested"), warn=_warn)
+
+# >>> NOFAR-ADD: geo proximity + external-distress signals folded into the screen set
+try:
+    _entities = distress_sources.build_entity_list(g, D.get("duke_oasis"))
+    _pp = DATA / "distress_perproj.parquet"
+    _pv = DATA / "distress_provenance.parquet"
+    per_proj   = pd.read_parquet(_pp) if _pp.exists() else pd.DataFrame()
+    provenance = pd.read_parquet(_pv) if _pv.exists() else pd.DataFrame()
+    scr["distress_external"] = distress_sources.distress_screen(per_proj)
+    _th_scr, TH_DET = geo_signals.thermal_retirement_proximity(
+        g, thermal_types=scope.THERMAL_TYPES, radius_km=TH_R, from_year=TH_YR, plant_types=TH_TY)
+    _dc = pd.read_parquet(DATA / "data_centers.parquet") if (DATA / "data_centers.parquet").exists() else None
+    _dc_scr, DC_DET = geo_signals.datacenter_proximity(
+        g, _dc, radius_km=DC_R, target_types=scope.TARGET_TYPES)
+    scr["thermal_retire"]  = _th_scr
+    scr["datacenter_prox"] = _dc_scr
+except Exception as _e:
+    provenance, per_proj = pd.DataFrame(), pd.DataFrame()
+    TH_DET, DC_DET = pd.DataFrame(), pd.DataFrame()
+    st.sidebar.warning(f"Señales nuevas no cargadas: {_e}")
+# <<< NOFAR-ADD
 DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
 THRESHOLD = st.session_state.get("thr", 0.5)
@@ -498,6 +540,31 @@ def fetch_courtlistener():
     pd.DataFrame(rows).to_parquet(f"{DATA}/courtlistener.parquet", index=False)
     reg["courtlistener"] = {"last_updated": str(TODAY.date()), "rows": len(rows)}; save_reg(reg)
 
+def fetch_warn_layoffs():
+    """AUTOMATIC daily layoffs for all SERC states (WARN Firehose). Cached to parquet."""
+    w = warn_live.fetch_warn_live(states=scope.SERC_STATES,
+                                  api_key=st.secrets.get("WARN_API_KEY"))
+    if len(w):
+        w.to_parquet(f"{DATA}/warn_live.parquet", index=False)
+        reg["warn_live"] = {"last_updated": str(TODAY.date()), "rows": len(w)}; save_reg(reg)
+    return w
+
+def fetch_distress():
+    """Entity-centric distress: build target list, scan free sources, cache to parquet."""
+    ent  = distress_sources.build_entity_list(g, D.get("duke_oasis"))
+    cl   = distress_sources.fetch_courtlistener(ent, token=st.secrets.get("COURTLISTENER_TOKEN"))
+    news = distress_sources.fetch_news(ent)
+    lien = distress_sources.fetch_liens_free(ent, courtlistener_token=st.secrets.get("COURTLISTENER_TOKEN"))
+    # automatic layoffs (live) -> direct + ambient provenance
+    wl   = fetch_warn_layoffs()
+    wprov = warn_live.to_provenance(wl, ent, g) if len(wl) else pd.DataFrame()
+    amb  = distress_sources.county_ambient(g, warn=_warn, duke_queue=D.get("duke_queue"),
+                                           restrictions=D.get("restrictions"), contested=D.get("contested"))
+    pp, prov = distress_sources.assemble(cl, news, lien, wprov, amb)
+    pp.to_parquet(f"{DATA}/distress_perproj.parquet", index=False)
+    prov.to_parquet(f"{DATA}/distress_provenance.parquet", index=False)
+    reg["distress"] = {"last_updated": str(TODAY.date()), "rows": len(prov)}; save_reg(reg)
+
 def fetch_eia860m():
     import requests
     base = "https://www.eia.gov/electricity/data/eia860m/xls/{m}_generator{y}.xlsx"
@@ -511,7 +578,7 @@ def fetch_eia860m():
                     dd = pd.read_excel(xls, sh, skiprows=2); dd["EIA Sheet"] = sh; fr.append(dd)
             df = pd.concat(fr, ignore_index=True)
             sc = "Plant State" if "Plant State" in df.columns else "State"
-            df = df[df[sc].isin(["NC", "SC"])]
+            df = df[df[sc].isin(scope.SERC_STATES)]
             keep = [c for c in ["Entity Name", "Plant ID", "Plant Name", sc, "County",
                                 "Nameplate Capacity (MW)", "Technology", "Status", "EIA Sheet"] if c in df.columns]
             df[keep].rename(columns={"Plant ID": "EIA Plant ID"}).to_parquet(f"{DATA}/eia860m.parquet", index=False)
@@ -639,6 +706,13 @@ with tab_targets_playbooks:
                                    color_discrete_sequence=[INDIGO], zoom=9, height=230)
             mf.update_layout(mapbox_style="open-street-map", margin=dict(l=0, r=0, t=0, b=0), showlegend=False)
             mf = add_nofar_layer(mf, True)
+            # NOFAR-ADD: radius circles around retiring thermal plants near this target
+            if isinstance(TH_DET, pd.DataFrame) and len(TH_DET) and "Generator ID" in TH_DET.columns:
+                for _, _t in TH_DET[TH_DET["Generator ID"] == sel].iterrows():
+                    _la, _lo = geo_signals.circle_polygon(_t["lat"], _t["lon"], TH_R)
+                    mf.add_trace(go.Scattermapbox(lat=_la, lon=_lo, mode="lines", fill="toself",
+                        fillcolor="rgba(244,200,67,0.10)", line=dict(color="rgba(244,200,67,0.55)"),
+                        hoverinfo="skip", showlegend=False))
             st.plotly_chart(mf, use_container_width=True, config={"displayModeBar": False})
         mo = D["m"][D["m"]["Generator ID"] == sel].sort_values("Date").tail(36)
         if len(mo) > 3:
@@ -660,6 +734,16 @@ with tab_targets_playbooks:
 <div class="row"><span class="k">Do</span> · {s['do']}</div>
 <div class="row"><span class="k">Verify</span> · {s['verify']}</div>
 <div class="hl">{s['have_lack']}</div></div></div>""", unsafe_allow_html=True)
+
+        st.divider()
+        _sig_here = provenance[provenance["Generator ID"] == sel] \
+            if len(provenance) and "Generator ID" in provenance.columns else None
+        if _sig_here is not None and len(_sig_here):
+            with st.expander(f"🔎 Señales de distress ({len(_sig_here)}) — fuentes"):
+                st.dataframe(_sig_here[["match_type","signal_type","matched_on","title","date","source","url"]],
+                             hide_index=True, use_container_width=True,
+                             column_config={"url": st.column_config.LinkColumn("Fuente")})
+        ai_assistant.render_project_chat(row, _sig_here, api_key=st.secrets.get("OPENAI_API_KEY"))
 
 # ─────────────────────────────── MAP
 with tab_map:
@@ -1119,6 +1203,10 @@ with tab_date_updates:
             ws = web_signals.scan_web_signals(g, ownership)
             ws.to_parquet(f"{DATA}/web_signals.parquet", index=False)
         st.cache_data.clear(); st.rerun()
+    if st.button("🧭 Update distress (entities → CourtListener + news + liens + county)"):
+        with st.spinner("Building entity list and scanning distress sources..."):
+            fetch_distress()
+        st.cache_data.clear(); st.rerun()
 
     st.markdown('<div class="sect" style="margin-top:18px">Static datasets in this build</div>', unsafe_allow_html=True)
     chips = {"Orennia projects": "Jul 2026 · 1,271 generators", "Duke cluster queue": "Mar 2026 · incl. 249 withdrawals",
@@ -1200,5 +1288,3 @@ with tab_score_methodology:
 <div class="row" style="margin-top:6px"><b>What it is:</b> {que}</div>
 <div class="row"><b>Why it matters for M&A:</b> {porque}</div>
 <div class="row" style="color:#6B668F"><b>Data source:</b> {fuente}</div></div>""", unsafe_allow_html=True)
-
-

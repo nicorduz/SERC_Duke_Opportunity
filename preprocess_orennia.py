@@ -24,6 +24,9 @@ STATIC_COLS = [
     "EIA Plant ID", "EIA Generator ID", "FERC Docket ID",
     "Latitude (Degrees)", "Longitude (Degrees)",
     "Solar Irradiance GHI (W/m2)", "Capex Per Watt ($/W)", "PTC/ITC",
+    # --- added for SERC-wide scope + distress linking ---
+    "Owner", "Parent Company", "Parent Company 2",
+    "Balancing Authority Code", "ISO", "Power Project Type",
 ]
 
 DEV_STAGE_MAP = {
@@ -62,6 +65,18 @@ def load_and_reduce(path_or_buffer, today=None):
     # ---- static table: latest row per generator ----
     keep = [c for c in STATIC_COLS if c in df.columns]
     g = (df.sort_values("Date").groupby("Generator ID", as_index=False).tail(1))[keep].copy()
+
+    # --- fix locale-formatted coordinates ("27.580.883" -> 27.580883) ---
+    def _fix_coord(v):
+        if pd.isna(v): return np.nan
+        t = str(v).strip(); neg = t.startswith("-")
+        digits = t.replace("-", "").replace(".", "")
+        try: x = int(digits) / 1e6
+        except ValueError: return np.nan
+        return -x if neg else x
+    for _c in ["Latitude (Degrees)", "Longitude (Degrees)"]:
+        if _c in g.columns:
+            g[_c] = g[_c].map(_fix_coord)
 
     # tech classification: Orennia leaves Panel Type empty for storage/hybrid
     name = g["Power Project Name"].fillna("").str.lower()

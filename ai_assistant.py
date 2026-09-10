@@ -15,9 +15,26 @@ current name on OpenAI's models page (they change often).
 """
 from __future__ import annotations
 import streamlit as st
-from openai_service import OpenAIProjectClient
 
 DEFAULT_MODEL = "gpt-5.6-terra"   # confirm current name; use a 'sol' tier for hard questions
+
+# openai_service.py lives in the repo root and needs `httpx`. Import it LAZILY so a
+# missing file or missing dependency degrades to "chat disabled" instead of taking
+# the whole app down with a ModuleNotFoundError at startup.
+_IMPORT_ERROR = None
+try:
+    from openai_service import OpenAIProjectClient
+except Exception as _e:            # ModuleNotFoundError, ImportError, anything
+    OpenAIProjectClient = None
+    _IMPORT_ERROR = _e
+
+
+def is_available() -> tuple[bool, str]:
+    """(ready, reason). Lets app.py show a hint instead of crashing."""
+    if OpenAIProjectClient is None:
+        return False, (f"Falta `openai_service.py` en el repo (o su dependencia "
+                       f"`httpx`). Detalle: {_IMPORT_ERROR}")
+    return True, ""
 
 
 def _project_context(row, signals_df=None) -> str:
@@ -67,6 +84,10 @@ def _ask(client: OpenAIProjectClient, instructions: str, prompt: str,
 
 def render_project_chat(row, signals_df=None, *, api_key=None, model=DEFAULT_MODEL):
     """Drop this inside the selected-target block of the Targets & Playbooks tab."""
+    ok, reason = is_available()
+    if not ok:
+        st.info("Chat de IA desactivado — " + reason)
+        return
     api_key = api_key or st.secrets.get("OPENAI_API_KEY")
     if not api_key:
         st.info("Añade OPENAI_API_KEY en Settings → Secrets para activar el chat de IA.")

@@ -1,3 +1,4 @@
+
 """
 Nofar SERC Deal Intelligence — Duke Carolinas (DEC + DEP) · professional MVP UI
 """
@@ -401,13 +402,21 @@ with st.sidebar:
     with st.expander("Señales geográficas"):
         TH_R  = st.slider("Radio térmicas (km)", 1, 50, 10)
         TH_YR = st.slider("Retiro desde año", 2026, 2045, 2028)
-        TH_TY = st.multiselect("Tipo planta", ["Coal", "Gas"], default=["Coal", "Gas"])
+        TH_TY = st.multiselect("Tipo planta", sorted(scope.THERMAL_TYPES),
+                               default=sorted(scope.THERMAL_TYPES))
         DC_R  = st.slider("Radio data centers (km)", 1, 60, 20)
 if _scope_mode == "Solo Duke NC/SC":
     g = scope.apply_scope(g, states=["NC", "SC"], duke_only=True)
 else:
     g = scope.apply_scope(g, iso="Non-ISO")
-st.sidebar.caption("Universo: " + scope.region_label(g))
+# Thermal plants (Coal / Natural Gas) are CONTEXT, not acquisition targets:
+# keep them in G_ALL for the proximity signal, exclude them from the target table.
+G_ALL = g.copy()
+if "Is Thermal" in g.columns:
+    g = g[~g["Is Thermal"].fillna(False)].reset_index(drop=True)
+st.sidebar.caption("Universo: " + scope.region_label(g)
+                   + (f" · {int(G_ALL['Is Thermal'].sum())} térmicas (contexto)"
+                      if "Is Thermal" in G_ALL.columns else ""))
 # <<< NOFAR-ADD
 
 _warn = pd.concat([D[k] for k in ("warn_nc", "warn_sc") if k in D], ignore_index=True) \
@@ -424,7 +433,8 @@ try:
     provenance = pd.read_parquet(_pv) if _pv.exists() else pd.DataFrame()
     scr["distress_external"] = distress_sources.distress_screen(per_proj)
     _th_scr, TH_DET = geo_signals.thermal_retirement_proximity(
-        g, thermal_types=scope.THERMAL_TYPES, radius_km=TH_R, from_year=TH_YR, plant_types=TH_TY)
+        G_ALL, thermal_types=scope.THERMAL_TYPES, radius_km=TH_R,
+        from_year=TH_YR, plant_types=TH_TY)
     _dc = pd.read_parquet(DATA / "data_centers.parquet") if (DATA / "data_centers.parquet").exists() else None
     _dc_scr, DC_DET = geo_signals.datacenter_proximity(
         g, _dc, radius_km=DC_R, target_types=scope.TARGET_TYPES)
@@ -698,6 +708,58 @@ with tab_targets_playbooks:
 <tr><td style="color:#6B668F">Queue</td><td>{row['Queue ID'] if pd.notna(row['Queue ID']) else '—'} · {row['Queue Cycle'] if pd.notna(row['Queue Cycle']) else ''}</td></tr>
 <tr><td style="color:#6B668F">Why flagged</td><td>{row['Why']}</td></tr>
 </table></div>""", unsafe_allow_html=True)
+
+        # >>> NOFAR-ADD: full attribute sheet from the merged Orennia exports
+        _ATTR_GROUPS = {
+            "Identificación": ["Generator ID", "Generator Name", "Owner", "Parent Company",
+                               "Parent Company 2", "EIA Plant ID", "EIA Generator ID",
+                               "EIA Unit Code", "FERC Docket ID"],
+            "Equipo y tecnología": ["Power Project Type", "Equipment Manufacturer",
+                                    "Equipment Model", "Panel Type", "Battery Type",
+                                    "Storage Duration (Hours)", "Storage Energy Rating (MWh)",
+                                    "Number of Turbines (Number)", "Wind Turbine Capacity (kW)",
+                                    "Capex Per Watt ($/W)", "EPC"],
+            "Incentivos y siting": ["PTC/ITC", "Native American Lands",
+                                    "Low Income Communities",
+                                    "Retired Coal Facilities Energy Communities",
+                                    "Behind the Meter", "CCUS Status"],
+            "Interconexión": ["Balancing Authority Code", "ISO", "Transmission Owner",
+                              "Point of Interconnection", "Connection Voltage (kV)",
+                              "Queue ID", "Queue Cycle", "Queue Date",
+                              "Interconnection Service Type",
+                              "Interconnection Cost Total ($)", "IX Cost $/kW"],
+            "Contrato": ["Contract Type", "Contract Offtaker", "Contract Offtaker Type",
+                         "Contract Price Type", "Contract Price ($/MWh)",
+                         "Contract Price ($/kW-month)", "Contract Capacity (MW)",
+                         "Contract Term Years (Year)", "Contract Execution Date",
+                         "Contract Termination Date", "Contract Delivery Location"],
+            "Fechas y desempeño": ["Power Project Status", "Detailed Status",
+                                   "Chance of Success (Percentage)", "IRR (Percentage)",
+                                   "First Power Date", "Reported First Power Date",
+                                   "Estimated Retirement Date", "Reported Retirement Date",
+                                   "Repowered", "Repower Date", "Lifetime Capacity Factor",
+                                   "CF (12m)", "CF (prev 12m)", "CF Trend (pp)",
+                                   "CF (fcst 10y)", "Has Generation History"],
+        }
+        with st.expander("📋 Ficha completa del proyecto (todos los campos de Orennia)"):
+            _hide_empty = st.checkbox("Ocultar campos vacíos", value=True, key=f"he_{sel}")
+            for _grp, _cols in _ATTR_GROUPS.items():
+                _rows = []
+                for _c in _cols:
+                    if _c not in row.index:
+                        continue
+                    _v = row[_c]
+                    _empty = pd.isna(_v) or str(_v).strip() in ("", "nan", "NaT")
+                    if _empty and _hide_empty:
+                        continue
+                    if isinstance(_v, pd.Timestamp):
+                        _v = _v.strftime("%Y-%m-%d")
+                    _rows.append({"Campo": _c, "Valor": "—" if _empty else str(_v)})
+                if _rows:
+                    st.markdown(f"**{_grp}**")
+                    st.dataframe(pd.DataFrame(_rows), hide_index=True,
+                                 use_container_width=True, height=min(35 * len(_rows) + 38, 320))
+        # <<< NOFAR-ADD
 
         if pd.notna(row["Latitude (Degrees)"]):
             mf = px.scatter_mapbox(pd.DataFrame([{"lat": row["Latitude (Degrees)"], "lon": row["Longitude (Degrees)"],

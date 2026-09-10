@@ -51,8 +51,8 @@ def require_login():
     meta = st.secrets.get("auth_meta", {})
     st.markdown(f"### {meta.get('title', 'Sign in')}")
     with st.form("login_form", clear_on_submit=False):
-        u = st.text_input("Usuario")
-        p = st.text_input("Contraseña", type="password")
+        u = st.text_input("User")
+        p = st.text_input("Password", type="password")
         ok = st.form_submit_button("Entrar")
     if ok:
         if _check(u.strip(), p):

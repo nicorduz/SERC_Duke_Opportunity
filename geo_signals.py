@@ -179,3 +179,40 @@ def datacenter_proximity(g, dc, *, radius_km=20.0, target_types=None):
                         + " data center(s) (" + detail["dc_mw_sum"].round(0).astype(int).astype(str)
                         + " MW load) — potential offtaker")
     return detail[["Generator ID", "Reason"]], detail
+
+
+# ------------------------------------------------------------------ utility territories
+def convex_hull(points):
+    """
+    Monotone-chain convex hull. Pure Python (no scipy/shapely dependency).
+    `points` is an iterable of (lon, lat). Returns the hull as a closed ring.
+    Used to sketch each balancing authority's footprint from its project locations.
+    NOTE: this is an APPROXIMATION derived from where projects sit — it is not an
+    official service-territory boundary.
+    """
+    pts = sorted(set((float(x), float(y)) for x, y in points
+                     if x == x and y == y))          # drop NaN, dedupe, sort
+    if len(pts) <= 2:
+        return pts
+    def cross(o, a, b):
+        return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
+    lower = []
+    for p in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+    upper = []
+    for p in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+    ring = lower[:-1] + upper[:-1]
+    return ring + [ring[0]] if ring else ring
+
+
+def hull_centroid(ring):
+    """Rough centre of a hull ring, for placing the territory label."""
+    if not ring:
+        return None, None
+    xs = [p[0] for p in ring]; ys = [p[1] for p in ring]
+    return sum(ys) / len(ys), sum(xs) / len(xs)      # (lat, lon)

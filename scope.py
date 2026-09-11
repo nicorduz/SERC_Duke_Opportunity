@@ -77,3 +77,39 @@ def region_label(g: pd.DataFrame) -> str:
     st = ", ".join(sorted(g["State"].dropna().unique())) if "State" in g else "?"
     ba = g["Balancing Authority Code"].nunique() if "Balancing Authority Code" in g else 0
     return f"{n} projects · {st} · {ba} balancing authorities"
+
+
+# ─────────────────────────────────────────────────────── CourtListener scoping
+# Federal BANKRUPTCY court ids covering the SERC / non-ISO Southeast. Used to keep
+# generic (non-entity) case searches inside our footprint — without this a query for
+# "solar" returns dockets from California, Texas and overseas subsidiaries.
+SERC_BANKRUPTCY_COURTS = [
+    "nceb", "ncmb", "ncwb",            # North Carolina
+    "scb",                             # South Carolina
+    "ganb", "gamb", "gasb",            # Georgia
+    "flnb", "flmb", "flsb",            # Florida
+    "alnb", "almb", "alsb",            # Alabama
+    "msnb", "mssb",                    # Mississippi
+    "tneb", "tnmb", "tnwb",            # Tennessee
+    "vaeb", "vawb",                    # Virginia
+    "kyeb", "kywb",                    # Kentucky
+]
+# Federal DISTRICT courts in the same states (lien / foreclosure / contract suits).
+SERC_DISTRICT_COURTS = [
+    "nced", "ncmd", "ncwd", "scd", "gand", "gamd", "gasd",
+    "flnd", "flmd", "flsd", "alnd", "almd", "alsd",
+    "msnd", "mssd", "tned", "tnmd", "tnwd", "vaed", "vawd", "kyed", "kywd",
+]
+SERC_COURTS = SERC_BANKRUPTCY_COURTS + SERC_DISTRICT_COURTS
+
+# Geographic terms used to keep free-text news searches inside the footprint.
+SERC_GEO_TERMS = [
+    "North Carolina", "South Carolina", "Georgia", "Florida", "Alabama",
+    "Mississippi", "Tennessee", "Carolinas", "Southeast",
+    "Duke Energy", "Southern Company", "Georgia Power", "Alabama Power",
+    "Florida Power", "Santee Cooper", "Dominion Energy South Carolina", "TVA",
+]
+
+
+def in_serc_court(court_id) -> bool:
+    return str(court_id or "").strip().lower() in set(SERC_COURTS)

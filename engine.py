@@ -131,7 +131,26 @@ DEFAULT_WEIGHTS = {"dev_distress": 4, "duke_withdrawn_match": 3.5, "contract_cli
                    "distress_external": 4.0, "thermal_retire": 2.0, "datacenter_prox": 1.5}
 WEIGHTS = DEFAULT_WEIGHTS  # retro-compatibilidad
 
-def composite_score(g, screens, weights=None, threshold=0.0):
+SCORE_MAX = 10.0    # every project is graded on a fixed 0-10 scale
+REFERENCE_HITS = 5  # a 10/10 = firing the five heaviest screens at once
+
+def composite_score(g, screens, weights=None, threshold=0.0, scale_max=SCORE_MAX,
+                    reference_hits=REFERENCE_HITS):
+    """
+    Weighted sum of the screens, rescaled to a fixed 0-10 grade.
+
+    Raw points are the sum of the weights of every screen a project fires.
+    The raw total is then divided by the THEORETICAL MAXIMUM (the sum of all
+    positive weights) and multiplied by `scale_max`, so the number always means
+    the same thing: "how much of everything we look for does this project show".
+    Changing a weight rescales every project consistently rather than inflating
+    the ceiling. Negative screens (county risk) subtract and can push a project
+    below zero, which we clamp at 0.
+
+    Both columns are returned:
+      'Opportunity Score' -> the 0-10 grade (what the UI shows)
+      'Raw Score'         -> the unscaled sum, for auditing the arithmetic
+    """
     W = {**DEFAULT_WEIGHTS, **(weights or {})}
     s = pd.Series(0.0, index=g["Generator ID"]); reasons = {}; fired = {}
     for key, w in W.items():
@@ -141,12 +160,29 @@ def composite_score(g, screens, weights=None, threshold=0.0):
             s[gid] = s.get(gid, 0) + w
             reasons.setdefault(gid, []).append(("⚠️ " if w < 0 else "") + r)
             fired.setdefault(gid, []).append(key)
+
+    # Calibration: dividing by the sum of ALL positive weights would be the
+    # theoretical maximum, but no real project ever fires fifteen screens at once —
+    # every grade would collapse into the bottom two points. The reference instead
+    # is "fires the N heaviest screens simultaneously", which is an excellent but
+    # achievable project. Anything above that is capped at 10.
+    max_possible = score_ceiling(W, reference_hits)
+    graded = (s / max_possible * scale_max).clip(lower=0, upper=scale_max)
+
     top = g.set_index("Generator ID").copy()
-    top["Opportunity Score"] = s
+    top["Raw Score"] = s
+    top["Opportunity Score"] = graded.round(2)
     top["Why"] = top.index.map(lambda i: " | ".join(reasons.get(i, [])))
     top["_fired"] = top.index.map(lambda i: fired.get(i, []))
     top = top[top["Opportunity Score"] >= max(threshold, 1e-9)]
     return top.sort_values("Opportunity Score", ascending=False).reset_index()
+
+
+def score_ceiling(weights=None, reference_hits=REFERENCE_HITS):
+    """Raw points that map to a 10/10 = the N heaviest positive weights combined."""
+    W = {**DEFAULT_WEIGHTS, **(weights or {})}
+    pos = sorted((w for w in W.values() if w > 0), reverse=True)
+    return sum(pos[:reference_hits]) or 1.0
 
 def build_playbook_context(row, screens, dq, restrictions, contested):
     """Assemble the ctx dict actions.generate_playbook needs, for one row."""

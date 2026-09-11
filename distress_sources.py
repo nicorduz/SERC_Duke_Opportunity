@@ -48,6 +48,54 @@ def _sim(a, b) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
+# Tokens too generic to prove a match on their own — "Duke" alone would pull in
+# Duke University dockets, "Southern" any southern-named company, and so on.
+_WEAK_TOKENS = {"duke", "southern", "dominion", "energy", "power", "solar", "green",
+                "national", "american", "united", "general", "first", "new", "sun",
+                "star", "pine", "oak", "river", "city", "county", "north", "south",
+                "east", "west", "clean", "light", "electric"}
+
+
+_LEGAL_ONLY = re.compile(r"\b(llc|l\.l\.c|inc|inc\.|corp|corporation|co|company|"
+                         r"lp|l\.p|llp|ltd|holdings?|the)\b", re.I)
+
+def norm_light(name) -> str:
+    """
+    Lighter normalization for MATCHING: strips punctuation and legal suffixes but
+    KEEPS industry words. `norm()` is deliberately aggressive for grouping entities
+    ("Duke Energy" -> "duke"), which is far too loose to validate a search hit —
+    it would accept "Duke University". Matching needs the fuller name.
+    """
+    if not isinstance(name, str):
+        return ""
+    s = re.sub(r"[^a-z0-9\s]", " ", name.lower())
+    s = _LEGAL_ONLY.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def name_matches(entity_name: str, text: str) -> bool:
+    """
+    Confirm a search hit really names our entity rather than sharing one common word.
+
+    Rule: every token of the entity name must appear in the text, AND the name must
+    carry either a distinctive token ("pinegate", "silicon ranch") or at least two
+    tokens together ("duke energy"). A single weak token ("duke") is never enough.
+    """
+    toks = [t for t in norm_light(entity_name).split() if len(t) > 2]
+    # If stripping legal suffixes leaves a single weak word ("Southern Company" ->
+    # "southern"), fall back to the full name so the pair still discriminates.
+    if len(toks) == 1 and toks[0] in _WEAK_TOKENS:
+        full = re.sub(r"[^a-z0-9\s]", " ", str(entity_name).lower())
+        toks = [t for t in re.sub(r"\s+", " ", full).strip().split() if len(t) > 2]
+    if not toks:
+        return False
+    low = str(text).lower()
+    if not all(t in low for t in toks):
+        return False
+    strong = sum(1 for t in toks if t not in _WEAK_TOKENS)
+    return strong >= 1 or len(toks) >= 2
+
+
 # ---------------------------------------------------------------- 1. entity list
 def build_entity_list(g, oasis=None, min_len=4):
     """
@@ -118,15 +166,29 @@ def fetch_courtlistener(entities, token=None, filed_after_days=540, per_min=5,
                 time.sleep(30); continue
             for it in r.json().get("results", [])[:5]:
                 name = it.get("caseName", "")
+                # Reject hits that merely share a common word with the entity.
+                if not name_matches(ent.entity_raw, name):
+                    continue
                 low = name.lower()
                 typ = ("bankruptcy" if any(k in low for k in ("bankrupt", "chapter 11", "chapter 7"))
                        else "litigation")
+                court = it.get("court", "")
+                try:
+                    import scope as _scope
+                    in_serc = _scope.in_serc_court(court)
+                except Exception:
+                    in_serc = False
                 rows.append({
                     "entity_norm": ent.entity_norm, "matched_on": ent.entity_raw,
                     "signal_type": typ, "title": name,
-                    "date": it.get("dateFiled", ""), "court": it.get("court", ""),
+                    "date": it.get("dateFiled", ""), "court": court,
+                    "in_serc": in_serc,
                     "url": "https://www.courtlistener.com" + (it.get("absolute_url") or ""),
-                    "source": "CourtListener", "match_type": "direct", "confidence": 0.9,
+                    "source": "CourtListener" + ("" if in_serc else " (out-of-region owner)"),
+                    "match_type": "direct",
+                    # an out-of-region filing by one of OUR owners still matters, but
+                    # we trust it a little less than one filed inside the footprint
+                    "confidence": 0.9 if in_serc else 0.75,
                     "generator_ids": ent.generator_ids})
         except Exception:
             pass
@@ -148,6 +210,10 @@ def fetch_news(entities, max_entities=40, progress=None):
     nmap = {norm(e): gids for e, gids in zip(entities["entity_raw"], entities["generator_ids"])}
     news = news.rename(columns={"link": "url", "published": "date"})
     news["entity_norm"] = news["company"].map(norm)
+    # drop headlines that don't actually name the entity (kills "Duke University" noise)
+    news = news[[name_matches(c, t) for c, t in zip(news["company"], news["title"])]]
+    if news.empty:
+        return pd.DataFrame()
     news["generator_ids"] = news["entity_norm"].map(lambda n: nmap.get(n, []))
     news["source"] = "Google News"; news["match_type"] = "direct"; news["confidence"] = 0.55
     news["matched_on"] = news["company"]

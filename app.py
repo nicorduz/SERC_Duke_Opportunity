@@ -109,6 +109,10 @@ PALETTE  = [INDIGO, GOLD, "#8F7EF0", DEEP, "#C9C2F5"]
 st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
                    page_icon="assets/nofar_logo.png", initial_sidebar_state="collapsed")
 
+# Bump this on every change you push. It renders in the sidebar, so you can always
+# confirm at a glance whether Streamlit Cloud is serving the build you just pushed.
+APP_VERSION = "v4 · 2026-09-11 · unique-widget-keys"
+
 APP_USER = auth.require_login() if auth else "dev"  # bypasses if module/secrets missing
 
 def logo_b64():
@@ -432,6 +436,7 @@ else:
 G_ALL = g.copy()
 if "Is Thermal" in g.columns:
     g = g[~g["Is Thermal"].fillna(False)].reset_index(drop=True)
+st.sidebar.caption(f"Build: {APP_VERSION}")
 if _MISSING:
     st.sidebar.warning("Optional modules not loaded:\n\n- " + "\n- ".join(_MISSING))
 st.sidebar.caption("Universe: " + scope.region_label(g)

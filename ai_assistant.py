@@ -46,40 +46,119 @@ def is_available(api_key=None) -> tuple[bool, str]:
     return True, ""
 
 
-# ──────────────────────────────────────────────────────── context
-def _project_context(row, signals_df=None) -> str:
-    def gv(k):
-        v = row.get(k, "")
-        return "" if v is None or (isinstance(v, float) and v != v) else str(v)
+# ──────────────────────────────────────────────────────── system pre-prompt
+SYSTEM_ROLE = """You are the acquisition screening analyst for Nofar USA's SERC Deal
+Intelligence desk. Nofar buys DISTRESSED and UNDERPERFORMING renewable energy assets
+(solar PV, battery storage, wind) in the SERC / non-ISO US Southeast — the vertically
+integrated utility territories of Duke Energy (DEC, DEP, Duke Florida), Southern Company
+(Georgia, Alabama, Mississippi Power), Florida Power & Light, TVA, Santee Cooper,
+Dominion Energy South Carolina and the Florida municipals. The thesis is: acquire a
+distressed or stalled project, reposition it, exit.
 
-    lines = [
-        "You are an M&A analyst screening distressed and underperforming solar PV,",
-        "storage and wind projects across the SERC (non-ISO) Southeast for acquisition.",
-        "Be concrete, cite your sources (documents and web), separate fact from inference,",
-        "and flag clearly what cannot be verified. Treat any valuation or avoided-cost",
-        "remark as back-of-the-envelope and recommend an external specialist for anything",
-        "binding.",
-        "",
-        f"PROJECT: {gv('Power Project Name')}  ({gv('Generator ID')})",
-        f"Type: {gv('Power Project Type')} | Technology: {gv('Technology')} | Capacity: {gv('Capacity (MW)')} MW",
-        f"Status: {gv('Detailed Status')} | Owner: {gv('Owner')} | Parent: {gv('Parent Company')}",
-        f"Balancing Authority: {gv('Balancing Authority Code')} | {gv('County')} County, {gv('State')}",
-        f"Queue ID: {gv('Queue ID')} | POI: {gv('Point of Interconnection')} | EIA Plant ID: {gv('EIA Plant ID')}",
-        f"Equipment: {gv('Equipment Manufacturer')} {gv('Equipment Model')} | Incentive: {gv('PTC/ITC')}",
-        f"Siting flags — Native American Lands: {gv('Native American Lands')} | "
-        f"Low Income Community: {gv('Low Income Communities')} | "
-        f"Retired Coal Energy Community: {gv('Retired Coal Facilities Energy Communities')}",
-        f"Contract: {gv('Contract Offtaker')} @ {gv('Contract Price ($/MWh)')} $/MWh, ends {gv('Contract Termination Date')[:10]}",
-        f"Capacity factor — last 12m: {gv('CF (12m)')} | trend: {gv('CF Trend (pp)')} pp",
-    ]
+YOUR JOB on every question about a project:
+1. ESTABLISH WHO OWNS IT. Name the project company / SPV, then the parent or sponsor
+   behind it. If the owner field is blank, say so explicitly and suggest where it can be
+   found (the utility's interconnection queue customer field, the state Secretary of
+   State registry, SEC EDGAR, the project's permit filings).
+2. BUILD THE OWNER'S CONTEXT. Is the sponsor healthy or under strain? Look for
+   bankruptcy or receivership filings, lawsuits, liens or UCC filings, layoffs (WARN
+   notices), missed milestones, asset sales, portfolio write-downs, financing trouble,
+   leadership churn, or news of them exiting a market. An owner in distress elsewhere
+   still puts THIS project in play.
+3. READ THE LOCAL CONTEXT. County-level signals matter: mass layoffs nearby, other
+   projects withdrawn from the same queue cluster, solar moratoria or restrictive
+   ordinances, organised local opposition, transmission constraints at the point of
+   interconnection.
+4. WEIGH THE ASSET ITSELF. Stage and momentum in the interconnection queue, capacity
+   factor versus forecast, PPA or avoided-cost exposure and when it expires,
+   interconnection upgrade cost, equipment vintage and manufacturer, retirement horizon,
+   proximity to a retiring thermal plant (freed capacity and POI) or to a data center
+   (potential offtaker).
+5. REACH A VERDICT. Say plainly whether the evidence supports a DISTRESS thesis, an
+   UNDERPERFORMANCE thesis, an OPPORTUNISTIC thesis (healthy but for sale), or NO CASE.
+   Then give the concrete next diligence step.
+
+HOW TO ANSWER:
+- Separate three things at all times: what the app's data shows, what you found on the
+  web just now, and what you are inferring. Label inference as inference.
+- Cite sources for anything from the web. Quote the filing, docket or article.
+- If you cannot verify something, say "not verified" rather than filling the gap.
+- Distinguish the PROJECT entity from the PARENT. A parent's bankruptcy does not mean
+  the project company filed, and vice versa — state which one the evidence concerns.
+- Never treat a headline as proof of a filing; a docket number or filing record is proof.
+- Any valuation, avoided-cost or IRR remark is back-of-the-envelope only; say so and
+  recommend an external specialist for anything binding.
+- Be concise and specific. Lead with the verdict, then the evidence.
+
+The structured record below comes from Nofar's own database (Orennia licensed data plus
+free public sources). Treat it as the baseline fact set and use web search to extend,
+corroborate or contradict it."""
+
+
+def _project_context(row, signals_df=None) -> str:
+    def gv(k, default="not reported"):
+        v = row.get(k, None)
+        if v is None or (isinstance(v, float) and v != v) or str(v).strip() in ("", "nan", "NaT"):
+            return default
+        return str(v)
+
+    L = [SYSTEM_ROLE, "", "=" * 62, "PROJECT RECORD (Nofar SERC Deal Intelligence)", "=" * 62,
+         "", "-- Identity --",
+         f"Project: {gv('Power Project Name')}   [{gv('Generator ID')}]",
+         f"Owner (project company): {gv('Owner')}",
+         f"Parent / sponsor: {gv('Parent Company')} {gv('Parent Company 2', '')}",
+         f"EIA Plant ID: {gv('EIA Plant ID')} | EIA Generator ID: {gv('EIA Generator ID')}",
+         f"FERC docket: {gv('FERC Docket ID')} | EPC: {gv('EPC')}",
+         "", "-- Asset --",
+         f"Type: {gv('Power Project Type')} | Capacity: {gv('Capacity (MW)')} MW AC / {gv('DC Capacity (MW)')} MW DC",
+         f"Status: {gv('Detailed Status')} | Chance of success: {gv('Chance of Success (Percentage)')}",
+         f"Equipment: {gv('Equipment Manufacturer')} {gv('Equipment Model', '')} | Panel type: {gv('Panel Type')}",
+         f"Capex: {gv('Capex Per Watt ($/W)')} $/W | Incentive: {gv('PTC/ITC')}",
+         f"First power: {gv('First Power Date')[:10]} | Est. retirement: {gv('Estimated Retirement Date')[:10]}",
+         "", "-- Grid --",
+         f"Balancing authority: {gv('Balancing Authority Code')} | Transmission owner: {gv('Transmission Owner')}",
+         f"Location: {gv('County')} County, {gv('State')}  ({gv('Latitude (Degrees)')}, {gv('Longitude (Degrees)')})",
+         f"Queue ID: {gv('Queue ID')} | Cycle: {gv('Queue Cycle')} | Queued: {gv('Queue Date')[:10]}",
+         f"POI: {gv('Point of Interconnection')} at {gv('Connection Voltage (kV)')} kV",
+         f"Interconnection cost: {gv('Interconnection Cost Total ($)')} total | {gv('IX Cost $/kW')} $/kW",
+         "", "-- Revenue --",
+         f"Offtaker: {gv('Contract Offtaker')} ({gv('Contract Offtaker Type')}) | Type: {gv('Contract Type')}",
+         f"Price: {gv('Contract Price ($/MWh)')} $/MWh | Term: {gv('Contract Term Years (Year)')} yrs",
+         f"Contract ends: {gv('Contract Termination Date')[:10]}",
+         "", "-- Performance --",
+         f"Capacity factor last 12m: {gv('CF (12m)')} | prior 12m: {gv('CF (prev 12m)')} | trend: {gv('CF Trend (pp)')} pp",
+         f"Forecast CF (10y): {gv('CF (fcst 10y)')} | Lifetime CF: {gv('Lifetime Capacity Factor')}",
+         "", "-- Siting flags --",
+         f"Native American lands: {gv('Native American Lands')} | Low income community: {gv('Low Income Communities')}",
+         f"Retired-coal energy community: {gv('Retired Coal Facilities Energy Communities')} | "
+         f"Behind the meter: {gv('Behind the Meter')}",
+         "", "-- Nofar screening --",
+         f"Opportunity grade: {gv('Opportunity Score')} / 10",
+         f"Screens fired: {gv('Why')}"]
+
     if signals_df is not None and len(signals_df):
-        lines.append("\nEXTERNAL DISTRESS SIGNALS MATCHED TO THIS PROJECT:")
-        for _, s in signals_df.head(15).iterrows():
-            lines.append(
-                f"- [{s.get('match_type')}/{s.get('signal_type')}] "
-                f"{str(s.get('title', ''))[:110]} "
-                f"({s.get('source')}, {str(s.get('date', ''))[:10]}) {s.get('url', '')}")
-    return "\n".join(lines)
+        L += ["", "-- External distress signals already matched to this project --"]
+        for _, s_ in signals_df.head(20).iterrows():
+            L.append(f"  [{s_.get('match_type')}] {s_.get('signal_type')}: "
+                     f"{str(s_.get('title',''))[:120]} "
+                     f"({s_.get('source')}, {str(s_.get('date',''))[:10]}) {s_.get('url','')}")
+        L.append("  NOTE: 'direct' means the signal names this owner/project. "
+                 "'ambient' means it was recorded in the same county and is context only.")
+    else:
+        L += ["", "-- External distress signals --",
+              "  None matched yet. Either the distress scan has not been run for this "
+              "entity, or nothing was found. Absence is NOT evidence of health — verify "
+              "on the web before concluding anything."]
+    return "\n".join(L)
+
+
+SUGGESTED_QUESTIONS = [
+    "Who really owns this project, and is that owner under financial strain?",
+    "Is there any evidence of bankruptcy, liens or litigation against the owner or parent?",
+    "What is happening in this county that could affect the project?",
+    "Build the distress case for this project — or tell me there isn't one.",
+    "What would I need to verify before approaching the owner?",
+]
 
 
 # ──────────────────────────────────────────────────────── built-in client
@@ -180,13 +259,23 @@ def render_project_chat(row, signals_df=None, *, api_key=None, model=DEFAULT_MOD
         st.caption("Web search enabled. Document upload needs `openai_service.py` "
                    "in the repo — optional.")
 
+    if not st.session_state[hist_key]:
+        st.caption("Suggested starting points:")
+        for _qi, _q in enumerate(SUGGESTED_QUESTIONS):
+            if st.button(_q, key=f"sq_{gid}_{_qi}", use_container_width=True):
+                st.session_state[f"pending_{gid}"] = _q
+                st.rerun()
+
     for m in st.session_state[hist_key]:
         with st.chat_message(m["role"]):
             st.markdown(m["content"])
             if m.get("sources"):
                 st.caption("Sources: " + " · ".join(m["sources"][:8]))
 
-    if q := st.chat_input("Ask about this target (data + web)..."):
+    q = st.chat_input("Ask about this target (data + web)...")
+    if not q and st.session_state.get(f"pending_{gid}"):
+        q = st.session_state.pop(f"pending_{gid}")
+    if q:
         st.session_state[hist_key].append({"role": "user", "content": q})
         with st.chat_message("user"):
             st.markdown(q)

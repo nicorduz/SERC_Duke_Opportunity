@@ -93,7 +93,7 @@ def build_entity_list(g, oasis=None, min_len=4):
 
 # ---------------------------------------------------------------- 2. free fetchers
 def fetch_courtlistener(entities, token=None, filed_after_days=540, per_min=5,
-                        max_entities=80):
+                        max_entities=80, progress=None):
     """
     Query CourtListener v4 /search/?type=r (RECAP dockets) by ENTITY name.
     Free API: Authorization: Token <key>. NOTE the May-2026 rate limits
@@ -106,7 +106,10 @@ def fetch_courtlistener(entities, token=None, filed_after_days=540, per_min=5,
     headers = {"Authorization": f"Token {token}"} if token else {}
     after = (pd.Timestamp.today() - pd.Timedelta(days=filed_after_days)).date()
     rows, sleep = [], max(60.0 / per_min, 1.0)
-    for ent in entities.head(max_entities).itertuples():
+    subset = entities.head(max_entities)
+    for _i, ent in enumerate(subset.itertuples()):
+        if progress:
+            progress(_i + 1, len(subset), ent.entity_raw)
         try:
             r = requests.get(base, headers=headers, timeout=30, params={
                 "q": f'"{ent.entity_raw}"', "type": "r",
@@ -131,7 +134,7 @@ def fetch_courtlistener(entities, token=None, filed_after_days=540, per_min=5,
     return pd.DataFrame(rows)
 
 
-def fetch_news(entities, max_entities=40):
+def fetch_news(entities, max_entities=40, progress=None):
     """Google News RSS distress scan by entity (SERC-wide, free, no key).
     Thin wrapper over web_signals so you keep one implementation."""
     try:
@@ -152,7 +155,8 @@ def fetch_news(entities, max_entities=40):
                  "url", "source", "match_type", "confidence", "generator_ids"]]
 
 
-def fetch_liens_free(entities, courtlistener_token=None, states=("FL",), max_entities=40):
+def fetch_liens_free(entities, courtlistener_token=None, states=("FL",), max_entities=40,
+                     progress=None):
     """
     FREE + automatic lien signal. Two layers:
       1. CourtListener lien/foreclosure/receivership actions (works today, free API)
@@ -162,7 +166,8 @@ def fetch_liens_free(entities, courtlistener_token=None, states=("FL",), max_ent
     frames = []
     try:
         frames.append(lien_sources.courtlistener_lien_terms(
-            entities, token=courtlistener_token, max_entities=max_entities))
+            entities, token=courtlistener_token, max_entities=max_entities,
+            progress=progress))
     except Exception:
         pass
     try:

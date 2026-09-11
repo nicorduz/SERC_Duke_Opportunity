@@ -1,0 +1,83 @@
+column,dtype,fill_pct
+Generator ID,str,100.0
+Generator Name,str,100.0
+Power Project Name,str,100.0
+State,str,100.0
+County,str,100.0
+Capacity (MW),float64,100.0
+DC Capacity (MW),float64,38.7
+Power Project Status,str,99.8
+Detailed Status,str,99.5
+First Power Date,datetime64[us],99.8
+Reported First Power Date,datetime64[us],98.1
+Estimated Retirement Date,datetime64[us],99.8
+Reported Retirement Date,datetime64[us],12.6
+Contract Offtaker,str,11.0
+Contract Type,str,9.2
+Contract Price ($/MWh),float64,39.5
+Contract Price ($/kW-month),float64,2.3
+Contract Term Years (Year),float64,3.2
+Contract Termination Date,datetime64[us],5.2
+Contract Capacity (MW),float64,5.5
+Queue Cycle,str,22.4
+Queue Date,datetime64[us],47.4
+Queue ID,str,48.5
+Interconnection Cost Total ($),float64,16.6
+Interconnection Service Type,str,12.8
+Point of Interconnection,str,46.7
+Connection Voltage (kV),float64,86.7
+Transmission Owner,str,96.6
+EIA Plant ID,float64,60.9
+EIA Generator ID,str,60.8
+EIA Unit Code,str,17.7
+FERC Docket ID,str,11.6
+Latitude (Degrees),float64,100.0
+Longitude (Degrees),float64,100.0
+Capex Per Watt ($/W),float64,45.4
+PTC/ITC,str,32.0
+Owner,str,71.5
+Parent Company,str,64.7
+Parent Company 2,str,1.0
+Balancing Authority Code,str,100.0
+ISO,str,100.0
+Power Project Type,str,100.0
+Chance of Success (Percentage),float64,87.5
+IRR (Percentage),float64,51.1
+Lifetime Capacity Factor,float64,88.0
+EPC,str,4.2
+Battery Type,str,0.9
+Storage Duration (Hours),float64,3.1
+Storage Energy Rating (MWh),float64,3.1
+Number of Turbines (Number),float64,0.1
+Low Income Communities,bool,100.0
+Repowered,str,0.5
+Repower Date,datetime64[s],0.0
+Wind Turbine Capacity (kW),float64,0.4
+CCUS ID,str,0.0
+Panel Type,str,9.4
+Contract Offtaker Type,str,8.1
+Equipment Manufacturer,str,18.0
+Equipment Model,str,16.9
+Native American Lands,object,51.9
+Retired Coal Facilities Energy Communities,object,51.9
+Behind the Meter,object,51.9
+CCUS Status,str,0.0
+Contract Price Type,str,15.5
+Contract Delivery Location,str,1.4
+Contract Execution Date,datetime64[us],4.6
+Technology,str,100.0
+Is Thermal,bool,100.0
+Age (yrs),float64,99.8
+Yrs to Contract End,float64,5.2
+Yrs to Est Retirement,float64,99.8
+Retirement Year,float64,99.8
+Dev Stage Score,float64,61.9
+Is Distress Status,bool,100.0
+Is Operating,bool,100.0
+Is QF Scale,bool,100.0
+IX Cost $/kW,float64,16.2
+CF (12m),float64,50.3
+CF (prev 12m),float64,49.1
+CF Trend (pp),float64,49.0
+CF (fcst 10y),float64,45.9
+Has Generation History,bool,100.0

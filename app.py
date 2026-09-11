@@ -111,7 +111,7 @@ st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
 
 # Bump this on every change you push. It renders in the sidebar, so you can always
 # confirm at a glance whether Streamlit Cloud is serving the build you just pushed.
-APP_VERSION = "v6 · 2026-09-11 · free basemap + progress scan"
+APP_VERSION = "v7 · 2026-09-11 · 0-10 grade · SERC-scoped signals · M&A screener"
 
 APP_USER = auth.require_login() if auth else "dev"  # bypasses if module/secrets missing
 
@@ -567,19 +567,64 @@ def fetch_ferc():
     reg["ferc_elibrary"] = {"last_updated": str(TODAY.date()), "rows": len(rows)}; save_reg(reg)
 
 def fetch_courtlistener():
-    import requests
-    rows = []
-    for t in ("solar", "renewable energy"):
+    """
+    Bankruptcy / litigation dockets, SCOPED TO OUR FOOTPRINT.
+
+    The previous version searched the bare terms "solar" and "renewable energy"
+    nationwide, which is why dockets from California, Texas and overseas entities
+    showed up. Two changes fix that:
+      1. generic sector queries are restricted to SERC-state federal courts
+         (scope.SERC_COURTS), and
+      2. we additionally sweep our own OWNER/PARENT entities — those are valid
+         anywhere in the country, because an owner in trouble in Delaware still
+         puts its SERC projects in play.
+    Each row records the court and whether the filing sits inside SERC.
+    """
+    import requests, time
+    base = "https://www.courtlistener.com/api/rest/v4/search/"
+    headers = {"Authorization": f"Token {st.secrets['COURTLISTENER_TOKEN']}"} \
+        if st.secrets.get("COURTLISTENER_TOKEN") else {}
+    after = str((TODAY - pd.Timedelta(days=180)).date())
+    rows, seen = [], set()
+
+    def _add(term, scope_tag, items):
+        for i in items:
+            url = "https://www.courtlistener.com" + (i.get("absolute_url") or "")
+            if url in seen:
+                continue
+            seen.add(url)
+            court = i.get("court", "")
+            rows.append({"term": term, "scope": scope_tag,
+                         "case": i.get("caseName", ""), "court": court,
+                         "in_serc": scope.in_serc_court(court),
+                         "filed": i.get("dateFiled", ""), "link": url})
+
+    # (1) sector terms, hard-limited to SERC courts
+    for t in ("solar", "renewable energy", "solar farm"):
         try:
-            r = requests.get("https://www.courtlistener.com/api/rest/v4/search/",
-                             params={"q": f'"{t}"', "type": "r", "order_by": "dateFiled desc",
-                                     "filed_after": str((TODAY - pd.Timedelta(days=120)).date())}, timeout=25)
-            rows += [{"term": t, "case": i.get("caseName", ""), "court": i.get("court", ""),
-                      "filed": i.get("dateFiled", ""),
-                      "link": "https://www.courtlistener.com" + (i.get("absolute_url") or "")}
-                     for i in r.json().get("results", [])[:25]]
+            r = requests.get(base, headers=headers, timeout=30, params={
+                "q": f'"{t}"', "type": "r", "order_by": "dateFiled desc",
+                "filed_after": after,
+                "court": " ".join(scope.SERC_BANKRUPTCY_COURTS)})
+            if r.status_code == 200:
+                _add(t, "SERC courts", r.json().get("results", [])[:20])
         except Exception:
             pass
+        time.sleep(12)
+
+    # (2) our own owners/parents — relevant wherever they file
+    try:
+        ents = distress_sources.build_entity_list(g, D.get("duke_oasis")).head(10)
+        for e in ents.itertuples():
+            r = requests.get(base, headers=headers, timeout=30, params={
+                "q": f'"{e.entity_raw}"', "type": "r",
+                "order_by": "dateFiled desc", "filed_after": after})
+            if r.status_code == 200:
+                _add(e.entity_raw, "portfolio owner", r.json().get("results", [])[:5])
+            time.sleep(12)
+    except Exception:
+        pass
+
     pd.DataFrame(rows).to_parquet(f"{DATA}/courtlistener.parquet", index=False)
     reg["courtlistener"] = {"last_updated": str(TODAY.date()), "rows": len(rows)}; save_reg(reg)
 
@@ -1355,6 +1400,8 @@ with tab_live_signals:
             title = r.get("title", r.get("case", ""))
             meta = r.get("published", r.get("filed", "")) or ""
             src = r.get("source", r.get("court", r.get("query", "")))
+            if "in_serc" in r.index and not bool(r.get("in_serc", True)):
+                src = f"{src} · out-of-region owner"
             st.markdown(f"""<div class="card" style="padding:12px 18px">
 <span class="badge b-sig">{src}</span> <span class="sub">{meta}</span><br>
 <a href="{r.get('link','')}" target="_blank" style="color:{INK};font-weight:600;text-decoration:none">{title}</a></div>""",
@@ -1454,14 +1501,69 @@ with tab_score_methodology:
 
     c1, c2 = st.columns([1, 2])
     with c1:
-        st.markdown('<div class="sect">Settings (recalculate everything live)</div>', unsafe_allow_html=True)
-        st.slider("Opportunity threshold (minimum score)", 0.0, 10.0, 0.5, 0.5, key="thr")
-        for k, v in DW.items():
-            st.slider(k, -3.0, 6.0, float(v), 0.5, key=f"w_{k}")
-        st.caption(f"With these values: {len(top)} opportunities out of {len(g)} generators.")
+        st.markdown('<div class="sect">Weights — every project is graded 0 to 10</div>'
+                    '<div class="sub">Drag the rope or type the exact number — the two stay '
+                    'in sync. A project earns the weight of every screen it fires; that raw '
+                    'total is then converted to a 0-10 grade where <b>10 = firing the five '
+                    'heaviest screens at once</b>. We calibrate to five rather than to all '
+                    'fifteen because no real project fires everything, and dividing by the '
+                    'theoretical maximum would squash every grade into the bottom two '
+                    'points.</div>', unsafe_allow_html=True)
+        st.slider("Opportunity threshold — minimum grade to count as a target",
+                  0.0, 10.0, 0.5, 0.1, key="thr")
+
+        SCREEN_LABELS = {
+            "dev_distress": "Development distress", "duke_withdrawn_match": "Duke-confirmed withdrawal",
+            "contract_cliff": "Contract cliff (PPA)", "underperf": "Underperformance",
+            "ix_burden": "Interconnection burden", "red_zone": "Duke red zone",
+            "qf_rollup": "Aging QF universe", "retirement": "Retirement horizon",
+            "late_stage": "Late-stage pipeline", "withdrawal_cluster": "County withdrawal cluster",
+            "warn_county": "WARN in county", "county_risk": "County risk (subtracts)",
+            "distress_external": "External distress (liens/layoffs/bankruptcy)",
+            "thermal_retire": "Near retiring thermal", "datacenter_prox": "Near data center",
+        }
+
+        def weight_control(k):
+            """Rope (slider) + digital stepper, two widgets kept in sync."""
+            lo, hi = (-10.0, 0.0) if DW[k] < 0 else (0.0, 10.0)
+            skey, nkey = f"w_{k}", f"wn_{k}"
+            st.session_state.setdefault(skey, float(DW[k]))
+            st.session_state.setdefault(nkey, float(DW[k]))
+            def _from_slider(): st.session_state[nkey] = st.session_state[skey]
+            def _from_number(): st.session_state[skey] = st.session_state[nkey]
+            c_s, c_n = st.columns([4, 1.15])
+            c_s.slider(SCREEN_LABELS.get(k, k), lo, hi, step=0.25, key=skey,
+                       on_change=_from_slider)
+            c_n.number_input("value", lo, hi, step=0.25, key=nkey,
+                             on_change=_from_number, label_visibility="collapsed")
+            return float(st.session_state[skey])
+
+        st.markdown("**Positive screens — evidence of an opportunity**")
+        for k in [x for x in DW if DW[x] >= 0]:
+            weight_control(k)
+        st.markdown("**Penalties — reasons to discount a project**")
+        for k in [x for x in DW if DW[x] < 0]:
+            weight_control(k)
+
+        _ceiling = engine.score_ceiling(weights)
+        st.caption(f"10/10 = **{_ceiling:.2f} raw points** (the {engine.REFERENCE_HITS} "
+                   f"heaviest screens combined). Right now **{len(top)}** of {len(g)} "
+                   f"projects clear the {st.session_state.get('thr', 0.5):.1f} threshold.")
+
+        _share = pd.DataFrame(
+            [{"Screen": SCREEN_LABELS.get(k, k), "Weight": v,
+              "Share of the 10 points": round(min(10 * v / _ceiling, 10), 2) if v > 0 else 0.0}
+             for k, v in sorted(weights.items(), key=lambda x: -x[1])])
+        st.dataframe(_share, hide_index=True, use_container_width=True, height=280,
+                     column_config={"Share of the 10 points": st.column_config.ProgressColumn(
+                         "Share of the 10 points", min_value=0.0, max_value=10.0, format="%.2f")})
+
         if st.button("Restore default values", key="btn_restore_weights"):
-            for k in DW: st.session_state[f"w_{k}"] = float(DW[k])
-            st.session_state["thr"] = 0.5; st.rerun()
+            for k in DW:
+                st.session_state[f"w_{k}"] = float(DW[k])
+                st.session_state[f"wn_{k}"] = float(DW[k])
+            st.session_state["thr"] = 0.5
+            st.rerun()
 
     INFO = {
       "dev_distress": ("Development distress", "Project status is Suspended, Postponed, or Moved to another cluster.",

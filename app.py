@@ -111,7 +111,7 @@ st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
 
 # Bump this on every change you push. It renders in the sidebar, so you can always
 # confirm at a glance whether Streamlit Cloud is serving the build you just pushed.
-APP_VERSION = "v5 · 2026-09-11 · glyph-map + utility layer"
+APP_VERSION = "v6 · 2026-09-11 · free basemap + progress scan"
 
 APP_USER = auth.require_login() if auth else "dev"  # bypasses if module/secrets missing
 
@@ -594,21 +594,68 @@ def fetch_warn_layoffs():
         reg["warn_live"] = {"last_updated": str(TODAY.date()), "rows": len(w)}; save_reg(reg)
     return w
 
-def fetch_distress():
-    """Entity-centric distress: build target list, scan free sources, cache to parquet."""
-    ent  = distress_sources.build_entity_list(g, D.get("duke_oasis"))
-    cl   = distress_sources.fetch_courtlistener(ent, token=st.secrets.get("COURTLISTENER_TOKEN"))
-    news = distress_sources.fetch_news(ent)
-    lien = distress_sources.fetch_liens_free(ent, courtlistener_token=st.secrets.get("COURTLISTENER_TOKEN"))
-    # automatic layoffs (live) -> direct + ambient provenance
-    wl   = fetch_warn_layoffs()
-    wprov = warn_live.to_provenance(wl, ent, g) if (warn_live and len(wl)) else pd.DataFrame()
-    amb  = distress_sources.county_ambient(g, warn=_warn, duke_queue=D.get("duke_queue"),
-                                           restrictions=D.get("restrictions"), contested=D.get("contested"))
-    pp, prov = distress_sources.assemble(cl, news, lien, wprov, amb)
+def fetch_distress(max_entities=20, do_warn=True, do_news=True,
+                   do_courtlistener=True, do_liens=False, status=None, bar=None):
+    """
+    Entity-centric distress scan, incremental and interruptible.
+
+    CourtListener's free tier allows ~5 requests/min, so each entity costs ~12 s.
+    Scanning 80 entities across two passes takes ~25 min, which Streamlit will drop
+    long before it finishes. Hence: a capped entity count, per-source switches, and
+    live progress so it is never a black box.
+    """
+    def say(msg):
+        if status is not None:
+            status.update(label=msg)
+
+    def mk_progress(tag, base, span):
+        def _cb(i, n, name):
+            if bar is not None:
+                bar.progress(min(base + span * i / max(n, 1), 1.0),
+                             text=f"{tag} {i}/{n} · {str(name)[:38]}")
+        return _cb
+
+    say("Building the deduplicated entity list...")
+    ent = distress_sources.build_entity_list(g, D.get("duke_oasis"))
+    frames = []
+
+    # county-level ambient layer — instant, no network
+    say("Aggregating county-level signals...")
+    frames.append(distress_sources.county_ambient(
+        g, warn=_warn, duke_queue=D.get("duke_queue"),
+        restrictions=D.get("restrictions"), contested=D.get("contested")))
+
+    if do_warn and warn_live is not None:
+        say("Fetching live WARN layoffs (1 call per state)...")
+        if bar is not None: bar.progress(0.10, text="WARN layoffs...")
+        wl = fetch_warn_layoffs()
+        if len(wl):
+            frames.append(warn_live.to_provenance(wl, ent, g))
+
+    if do_news:
+        say("Scanning news per entity...")
+        frames.append(distress_sources.fetch_news(ent, max_entities=max_entities))
+
+    if do_courtlistener:
+        say(f"CourtListener bankruptcies — {max_entities} entities (~12 s each)...")
+        frames.append(distress_sources.fetch_courtlistener(
+            ent, token=st.secrets.get("COURTLISTENER_TOKEN"),
+            max_entities=max_entities, progress=mk_progress("Bankruptcy", 0.20, 0.40)))
+
+    if do_liens:
+        say(f"Liens / foreclosures — {max_entities} entities (~12 s each)...")
+        frames.append(distress_sources.fetch_liens_free(
+            ent, courtlistener_token=st.secrets.get("COURTLISTENER_TOKEN"),
+            max_entities=max_entities, progress=mk_progress("Liens", 0.60, 0.35)))
+
+    say("Matching signals to projects...")
+    if bar is not None: bar.progress(0.97, text="Matching...")
+    pp, prov = distress_sources.assemble(*frames)
     pp.to_parquet(f"{DATA}/distress_perproj.parquet", index=False)
     prov.to_parquet(f"{DATA}/distress_provenance.parquet", index=False)
     reg["distress"] = {"last_updated": str(TODAY.date()), "rows": len(prov)}; save_reg(reg)
+    if bar is not None: bar.progress(1.0, text="Done")
+    return len(prov), len(ent)
 
 def fetch_eia860m():
     import requests
@@ -934,6 +981,11 @@ with tab_map:
         _owner_opts = sorted(g["Owner"].dropna().unique()) if "Owner" in g.columns else []
         f_owner = r2[2].multiselect("Owner", _owner_opts, default=[], key="map_owner")
         marker_scale = r2[3].slider("Marker size", 4, 20, 9, key="map_msize")
+        # Only these two Plotly mapbox styles are free. Carto's positron/dark-matter
+        # now require an API key and render an "API KEY REQUIRED" watermark.
+        _bm_label = st.selectbox("Base map", ["Streets (OpenStreetMap)", "Minimal (no tiles)"],
+                                 key="map_basemap")
+        _basemap = "open-street-map" if _bm_label.startswith("Streets") else "white-bg"
 
         # Siting flags — the label carries the number of positives, because Orennia
         # reports Native American Lands and Low Income Communities as false for every
@@ -1170,7 +1222,7 @@ with tab_map:
         _clat = float(mm["Latitude (Degrees)"].mean()) if len(mm) else 34.5
         _clon = float(mm["Longitude (Degrees)"].mean()) if len(mm) else -81.0
         fig.update_layout(
-            mapbox=dict(style="carto-positron", zoom=5.3,
+            mapbox=dict(style=_basemap, zoom=5.3,
                         center={"lat": _clat, "lon": _clon}),
             margin=dict(l=0, r=0, t=0, b=0), height=720, font_family="Inter",
             legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#E6E2FA",
@@ -1349,10 +1401,33 @@ with tab_date_updates:
             ws = web_signals.scan_web_signals(g, ownership)
             ws.to_parquet(f"{DATA}/web_signals.parquet", index=False)
         st.cache_data.clear(); st.rerun()
-    if st.button("🧭 Update distress signals (entities → CourtListener + news + liens + county)",
-                 key="btn_update_distress"):
-        with st.spinner("Building entity list and scanning distress sources..."):
-            fetch_distress()
+    st.markdown('<div class="sect" style="margin-top:14px">Distress scan</div>'
+                '<div class="sub">Searches per ENTITY (owner / parent), never per project. '
+                "CourtListener's free tier allows ~5 requests per minute, so each entity "
+                "costs about 12 seconds — pick the scope accordingly.</div>",
+                unsafe_allow_html=True)
+    dcol = st.columns([1, 1, 1, 1])
+    _dm = dcol[0].slider("Entities to scan", 5, 60, 20, 5, key="ds_max")
+    _d_news = dcol[1].toggle("News", value=True, key="ds_news")
+    _d_cl   = dcol[2].toggle("Bankruptcy", value=True, key="ds_cl")
+    _d_lien = dcol[3].toggle("Liens (slow)", value=False, key="ds_lien")
+
+    _eta = (_dm * 12 * ((1 if _d_cl else 0) + (1 if _d_lien else 0))
+            + (_dm * 1.5 if _d_news else 0) + 20)
+    st.caption(f"County signals and WARN layoffs always run (fast). "
+               f"Estimated time: **~{_eta/60:.0f} min**. Keep this tab open.")
+
+    if st.button("🧭 Run distress scan", key="btn_update_distress", type="primary"):
+        _bar = st.progress(0.0, text="Starting...")
+        with st.status("Distress scan running...", expanded=True) as _stt:
+            try:
+                _n, _ne = fetch_distress(max_entities=_dm, do_news=_d_news,
+                                         do_courtlistener=_d_cl, do_liens=_d_lien,
+                                         status=_stt, bar=_bar)
+                _stt.update(label=f"Done — {_n} signals across {_ne} entities",
+                            state="complete")
+            except Exception as _e:
+                _stt.update(label=f"Failed: {_e}", state="error")
         st.cache_data.clear(); st.rerun()
 
     st.markdown('<div class="sect" style="margin-top:18px">Static datasets in this build</div>', unsafe_allow_html=True)

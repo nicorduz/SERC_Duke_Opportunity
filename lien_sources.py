@@ -112,7 +112,7 @@ def fetch_state_liens(entities, states=("FL", "NC", "SC"), max_entities=40, paus
 LIEN_TERMS = ["lien", "foreclosure", "mechanics lien", "deed of trust", "receivership"]
 
 def courtlistener_lien_terms(entities, token=None, filed_after_days=730,
-                             max_entities=40, per_min=5):
+                             max_entities=40, per_min=5, progress=None):
     """
     Automatic lien-adjacent signal that works TODAY: query CourtListener (free)
     for lien / foreclosure / receivership actions naming each entity.
@@ -124,7 +124,10 @@ def courtlistener_lien_terms(entities, token=None, filed_after_days=730,
     after = (pd.Timestamp.today() - pd.Timedelta(days=filed_after_days)).date()
     rows, sleep = [], max(60.0 / per_min, 1.0)
 
-    for ent in entities.head(max_entities).itertuples():
+    subset = entities.head(max_entities)
+    for _i, ent in enumerate(subset.itertuples()):
+        if progress:
+            progress(_i + 1, len(subset), ent.entity_raw)
         q = f'"{ent.entity_raw}" AND (lien OR foreclosure OR receivership)'
         try:
             r = requests.get(base, headers=headers, timeout=30,

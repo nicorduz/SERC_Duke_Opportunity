@@ -111,7 +111,7 @@ st.set_page_config(page_title="Nofar · SERC Deal Intelligence", layout="wide",
 
 # Bump this on every change you push. It renders in the sidebar, so you can always
 # confirm at a glance whether Streamlit Cloud is serving the build you just pushed.
-APP_VERSION = "v4 · 2026-09-11 · unique-widget-keys"
+APP_VERSION = "v5 · 2026-09-11 · glyph-map + utility layer"
 
 APP_USER = auth.require_login() if auth else "dev"  # bypasses if module/secrets missing
 
@@ -873,25 +873,54 @@ with tab_targets_playbooks:
                                                  api_key=st.secrets.get("OPENAI_API_KEY"))
 
 # ─────────────────────────────── MAP
+# Glyph + colour per technology. Plotly's mapbox `marker.symbol` only works with a
+# Mapbox token, so we draw a small dot plus a unicode glyph as text — that renders
+# on the free open-street-map style and stays readable at any zoom.
+TECH_STYLE = {
+    "Solar":       {"glyph": "☀", "color": "#E0A500", "label": "Solar"},
+    "Storage":     {"glyph": "▮", "color": "#4A2EE3", "label": "Storage / BESS"},
+    "Wind":        {"glyph": "✦", "color": "#00A88F", "label": "Wind"},
+    "Coal":        {"glyph": "▲", "color": "#4A4458", "label": "Coal"},
+    "Natural Gas": {"glyph": "⬣", "color": "#C96A1B", "label": "Natural gas"},
+}
+FALLBACK_STYLE = {"glyph": "●", "color": "#8F7EF0", "label": "Other"}
+NOFAR_COLOR   = "#FF2D95"   # Nofar sites: unique magenta, never reused
+DC_COLOR      = "#00B7FF"   # data centers
+THERMAL_COLOR = "#C1121F"   # retiring thermal
+BA_PALETTE = ["#4A2EE3", "#E0A500", "#00A88F", "#C96A1B", "#B3261E", "#7A5AF8",
+              "#0F9D58", "#D81B60", "#00838F", "#5D4037", "#455A64", "#8E24AA",
+              "#F4511E"]
+
+
+def _truthy(series):
+    return series.astype(str).str.strip().str.lower().isin(["true", "yes", "y", "1"])
+
+
+def _flag_label(frame, col, text):
+    """Append the number of positives so a dead filter is obvious before you use it."""
+    if col not in frame.columns:
+        return f"{text} (n/a)"
+    return f"{text} ({int(_truthy(frame[col]).sum())} yes)"
+
+
 with tab_map:
     st.markdown(
         '<div class="sect">Asset map</div>'
-        '<div class="sub">Colour = technology · size = capacity · use the filters to '
-        'slice the portfolio by siting, incentives, ownership and signals.</div>',
+        '<div class="sub">Each technology has its own glyph and colour · marker size = capacity · '
+        'toggle layers for data centers, retiring thermal plants and utility territories.</div>',
         unsafe_allow_html=True)
 
     # ---------- filter panel ----------
     with st.expander("🔎 Map filters", expanded=True):
         r1 = st.columns(4)
-        f_state = r1[0].multiselect("State", sorted(g["State"].dropna().unique()),
-                                    default=sorted(g["State"].dropna().unique()),
-                                    key="map_state")
+        _state_opts = sorted(g["State"].dropna().unique())
+        f_state = r1[0].multiselect("State", _state_opts, default=_state_opts, key="map_state")
         _ba_opts = sorted(g["Balancing Authority Code"].dropna().unique()) \
             if "Balancing Authority Code" in g.columns else []
-        f_ba = r1[1].multiselect("Balancing authority", _ba_opts, default=_ba_opts,
+        f_ba = r1[1].multiselect("Balancing authority (utility)", _ba_opts, default=_ba_opts,
                                  key="map_ba")
-        _ty_opts = sorted(g["Power Project Type"].dropna().unique()) \
-            if "Power Project Type" in g.columns else sorted(g["Technology"].dropna().unique())
+        _tcol = "Power Project Type" if "Power Project Type" in g.columns else "Technology"
+        _ty_opts = sorted(g[_tcol].dropna().unique())
         f_type = r1[2].multiselect("Technology", _ty_opts, default=_ty_opts, key="map_type")
         f_status = r1[3].multiselect("Status", sorted(g["Detailed Status"].dropna().unique()),
                                      default=[], key="map_status")
@@ -904,16 +933,19 @@ with tab_map:
                                0.0, 0.5, key="map_score")
         _owner_opts = sorted(g["Owner"].dropna().unique()) if "Owner" in g.columns else []
         f_owner = r2[2].multiselect("Owner", _owner_opts, default=[], key="map_owner")
-        color_by = r2[3].selectbox(
-            "Colour by",
-            ["Technology", "Status", "Opportunity", "Balancing authority", "Parent company"],
-            key="map_colorby")
+        marker_scale = r2[3].slider("Marker size", 4, 20, 9, key="map_msize")
 
+        # Siting flags — the label carries the number of positives, because Orennia
+        # reports Native American Lands and Low Income Communities as false for every
+        # project in this export. Selecting "Yes" there legitimately returns nothing.
         r3 = st.columns(4)
-        f_native = r3[0].selectbox("Native American lands", ["Any", "Yes", "No"], key="map_native")
-        f_lowinc = r3[1].selectbox("Low income community", ["Any", "Yes", "No"], key="map_lowinc")
-        f_coalec = r3[2].selectbox("Retired-coal energy community", ["Any", "Yes", "No"],
-                                   key="map_coalec")
+        f_native = r3[0].selectbox(_flag_label(g, "Native American Lands", "Native American lands"),
+                                   ["Any", "Yes", "No"], key="map_native")
+        f_lowinc = r3[1].selectbox(_flag_label(g, "Low Income Communities", "Low income community"),
+                                   ["Any", "Yes", "No"], key="map_lowinc")
+        f_coalec = r3[2].selectbox(_flag_label(g, "Retired Coal Facilities Energy Communities",
+                                               "Retired-coal energy community"),
+                                   ["Any", "Yes", "No"], key="map_coalec")
         f_incent = r3[3].multiselect("Incentive (PTC/ITC)",
                                      sorted(g["PTC/ITC"].dropna().unique())
                                      if "PTC/ITC" in g.columns else [], default=[],
@@ -924,38 +956,36 @@ with tab_map:
                                      key="map_contract")
         f_signal = r4[1].selectbox("External distress signal", ["Any", "With signal", "Without"],
                                    key="map_signal")
-        f_btm = r4[2].selectbox("Behind the meter", ["Any", "Yes", "No"], key="map_btm")
+        f_btm = r4[2].selectbox(_flag_label(g, "Behind the Meter", "Behind the meter"),
+                                ["Any", "Yes", "No"], key="map_btm")
         only_opp = r4[3].toggle("Opportunities only", value=False, key="map_onlyopp")
 
         st.markdown("**Layers**")
-        l = st.columns(5)
-        show_nofar = l[0].toggle("Nofar sites", value=True, key="map_l_nofar")
-        show_dc = l[1].toggle("Data centers", value=True, key="map_l_dc")
-        show_thermal = l[2].toggle("Retiring thermal", value=True, key="map_l_thermal")
-        show_circles = l[3].toggle("Radius circles", value=True, key="map_l_circles")
-        show_restricted_pois = l[4].toggle("Restricted POIs", value=False, key="map_l_poi")
+        l = st.columns(6)
+        show_nofar    = l[0].toggle("Nofar sites", value=True, key="map_l_nofar")
+        show_dc       = l[1].toggle("Data centers", value=True, key="map_l_dc")
+        show_thermal  = l[2].toggle("Retiring thermal", value=True, key="map_l_thermal")
+        show_circles  = l[3].toggle("Radius circles", value=True, key="map_l_circles")
+        show_utility  = l[4].toggle("Utility territory", value=False, key="map_l_utility")
+        show_restricted_pois = l[5].toggle("Restricted POIs", value=False, key="map_l_poi")
 
     # ---------- apply filters ----------
     mm = g.dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"]).copy()
     mm = mm.merge(top[["Generator ID", "Opportunity Score"]], on="Generator ID", how="left")
-    mm["Opportunity Score"] = mm["Opportunity Score"].fillna(0)
+    mm["Opportunity Score"] = pd.to_numeric(mm["Opportunity Score"], errors="coerce").fillna(0)
 
     def _yn(frame, col, choice):
-        """Filter a boolean-ish column by a Yes/No/Any selector."""
         if choice == "Any" or col not in frame.columns:
             return frame
-        truthy = frame[col].astype(str).str.strip().str.lower().isin(
-            ["true", "yes", "y", "1"])
-        return frame[truthy] if choice == "Yes" else frame[~truthy]
+        t = _truthy(frame[col])
+        return frame[t] if choice == "Yes" else frame[~t]
 
-    if f_state:  mm = mm[mm["State"].isin(f_state)]
+    if f_state: mm = mm[mm["State"].isin(f_state)]
     if f_ba and "Balancing Authority Code" in mm.columns:
         mm = mm[mm["Balancing Authority Code"].isin(f_ba)]
-    if f_type:
-        _tcol = "Power Project Type" if "Power Project Type" in mm.columns else "Technology"
-        mm = mm[mm[_tcol].isin(f_type)]
-    if f_status:   mm = mm[mm["Detailed Status"].isin(f_status)]
-    if f_owner:    mm = mm[mm["Owner"].isin(f_owner)]
+    if f_type:   mm = mm[mm[_tcol].isin(f_type)]
+    if f_status: mm = mm[mm["Detailed Status"].isin(f_status)]
+    if f_owner:  mm = mm[mm["Owner"].isin(f_owner)]
     if f_incent and "PTC/ITC" in mm.columns:
         mm = mm[mm["PTC/ITC"].isin(f_incent)]
     mm = mm[mm["Capacity (MW)"].between(f_mw[0], f_mw[1])]
@@ -976,127 +1006,189 @@ with tab_map:
     if only_opp:
         mm = mm[mm["Opportunity Score"] >= max(THRESHOLD, 1e-9)]
 
-    # ---------- colour dimension ----------
-    TECH_COLOURS = {"Solar": "#F4C843", "Storage": "#4A2EE3", "Wind": "#25B6A6",
-                    "Natural Gas": "#E8743B", "Coal": "#6B668F",
-                    "Solar PV": "#F4C843", "Storage/Hybrid": "#4A2EE3"}
-    if color_by == "Technology":
-        ccol = "Power Project Type" if "Power Project Type" in mm.columns else "Technology"
-        cmap = TECH_COLOURS
-    elif color_by == "Status":
-        ccol, cmap = "Detailed Status", None
-    elif color_by == "Balancing authority":
-        ccol, cmap = "Balancing Authority Code", None
-    elif color_by == "Parent company":
-        ccol, cmap = "Parent Company", None
-    else:
-        mm["Opportunity"] = np.where(mm["Opportunity Score"] >= max(THRESHOLD, 1e-9),
-                                     "Opportunity", "No signal")
-        ccol, cmap = "Opportunity", {"No signal": "#C7C4D9", "Opportunity": INDIGO}
-
     st.caption(f"{len(mm)} projects shown · {mm['Capacity (MW)'].sum():,.0f} MW")
+    for _c, _lbl, _ch in [("Native American Lands", "Native American lands", f_native),
+                          ("Low Income Communities", "Low income community", f_lowinc)]:
+        if _ch == "Yes" and _c in g.columns and int(_truthy(g[_c]).sum()) == 0:
+            st.warning(f"Orennia reports **{_lbl} = false for every project** in this "
+                       f"export, so this filter can never return a result. Set it back to *Any*.")
 
-    if mm.empty:
-        st.warning("No projects match these filters.")
-    else:
-        _hover = {c: True for c in ["County", "State", "Detailed Status", "Owner",
-                                    "Balancing Authority Code", "PTC/ITC"]
-                  if c in mm.columns}
-        _hover.update({"Opportunity Score": ":.1f", "Capacity (MW)": ":.1f",
-                       "Latitude (Degrees)": False, "Longitude (Degrees)": False})
-        fig = px.scatter_mapbox(
-            mm, lat="Latitude (Degrees)", lon="Longitude (Degrees)",
-            size="Capacity (MW)", size_max=26, color=ccol,
-            color_discrete_map=cmap or {},
-            hover_name="Power Project Name", hover_data=_hover,
-            zoom=5.4, height=680)
-        fig.update_layout(mapbox_style="open-street-map",
-                          margin=dict(l=0, r=0, t=0, b=0), font_family="Inter",
-                          legend_title_text=color_by,
-                          legend=dict(bgcolor="rgba(255,255,255,0.85)"))
+    fig = go.Figure()
 
-        # ---- data-center layer ----
-        if show_dc:
-            _dcf = DATA / "data_centers.parquet"
-            if _dcf.exists():
-                _dc = pd.read_parquet(_dcf)
-                _dc = _dc.dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"])
-                if f_state:
-                    _dc = _dc[_dc["State"].isin(f_state)] if "State" in _dc.columns else _dc
-                if len(_dc):
-                    _mwd = pd.to_numeric(_dc.get("Power Capacity (MW)"), errors="coerce").fillna(1)
-                    fig.add_trace(go.Scattermapbox(
-                        lat=_dc["Latitude (Degrees)"], lon=_dc["Longitude (Degrees)"],
-                        mode="markers", name="Data centers",
-                        marker=dict(size=(8 + 14 * (_mwd / max(_mwd.max(), 1))).clip(6, 26),
-                                    color="#00A3FF", opacity=0.75),
-                        text=_dc.get("Name", ""),
-                        hovertemplate="<b>%{text}</b><br>Data center<extra></extra>"))
+    # ---------- utility (balancing authority) territories ----------
+    # Approximated as the convex hull of each BA's projects. This sketches the
+    # operating footprint; it is NOT an official service-territory boundary.
+    if show_utility and "Balancing Authority Code" in mm.columns:
+        for i, (ba, grp) in enumerate(mm.groupby("Balancing Authority Code")):
+            ring = geo_signals.convex_hull(
+                zip(grp["Longitude (Degrees)"], grp["Latitude (Degrees)"]))
+            if len(ring) < 4:
+                continue
+            col = BA_PALETTE[i % len(BA_PALETTE)]
+            r, gg, b = int(col[1:3], 16), int(col[3:5], 16), int(col[5:7], 16)
+            fig.add_trace(go.Scattermapbox(
+                lat=[p[1] for p in ring], lon=[p[0] for p in ring],
+                mode="lines", fill="toself",
+                fillcolor=f"rgba({r},{gg},{b},0.07)",
+                line=dict(color=f"rgba({r},{gg},{b},0.55)", width=2),
+                name=f"{ba} territory",
+                hovertemplate=f"<b>{ba}</b> — {scope.BA_UTILITY.get(ba, 'utility')}"
+                              f"<br>{len(grp)} projects<extra></extra>"))
 
-        # ---- retiring thermal layer + radius circles ----
-        if show_thermal and "Is Thermal" in G_ALL.columns:
-            _th = G_ALL[G_ALL["Is Thermal"].fillna(False)].dropna(
+    # ---------- one trace per technology: small dot + glyph ----------
+    _mwv = pd.to_numeric(mm["Capacity (MW)"], errors="coerce").fillna(0)
+    _mwmax_v = max(float(_mwv.max()), 1.0)
+    for tech, grp in mm.groupby(_tcol):
+        stl = TECH_STYLE.get(str(tech), FALLBACK_STYLE)
+        gmw = pd.to_numeric(grp["Capacity (MW)"], errors="coerce").fillna(0)
+        sizes = (marker_scale * 0.55 + marker_scale * (gmw / _mwmax_v) ** 0.5).clip(4, 30)
+        hov = ("<b>%{customdata[0]}</b><br>" + str(tech) +
+               " · %{customdata[1]:.1f} MW<br>%{customdata[2]}<br>"
+               "Owner: %{customdata[3]}<br>%{customdata[4]} County, %{customdata[5]}"
+               " · BA %{customdata[6]}<br>Score: %{customdata[7]:.1f}<extra></extra>")
+        cd = np.stack([
+            grp["Power Project Name"].astype(str), gmw,
+            grp["Detailed Status"].astype(str),
+            grp.get("Owner", pd.Series("—", index=grp.index)).fillna("—").astype(str),
+            grp["County"].astype(str), grp["State"].astype(str),
+            grp.get("Balancing Authority Code", pd.Series("—", index=grp.index)).fillna("—").astype(str),
+            grp["Opportunity Score"].astype(float)], axis=-1)
+        fig.add_trace(go.Scattermapbox(
+            lat=grp["Latitude (Degrees)"], lon=grp["Longitude (Degrees)"],
+            mode="markers+text",
+            marker=dict(size=sizes, color=stl["color"], opacity=0.45),
+            text=[stl["glyph"]] * len(grp), textposition="middle center",
+            textfont=dict(size=max(9, marker_scale), color=stl["color"]),
+            name=f'{stl["glyph"]}  {stl["label"]}',
+            customdata=cd, hovertemplate=hov))
+
+    # ---------- data centers + their radius ----------
+    if show_dc:
+        _dcf = DATA / "data_centers.parquet"
+        if _dcf.exists():
+            _dc = pd.read_parquet(_dcf).dropna(
                 subset=["Latitude (Degrees)", "Longitude (Degrees)"])
-            if "Retirement Year" in _th.columns:
-                _th = _th[_th["Retirement Year"] >= TH_YR]
-            if f_state and "State" in _th.columns:
-                _th = _th[_th["State"].isin(f_state)]
-            if TH_TY and "Power Project Type" in _th.columns:
-                _th = _th[_th["Power Project Type"].isin(TH_TY)]
-            if len(_th):
+            if f_state and "State" in _dc.columns:
+                _dc = _dc[_dc["State"].isin(f_state)]
+            if len(_dc):
+                _dmw = pd.to_numeric(_dc.get("Power Capacity (MW)"), errors="coerce").fillna(0)
                 fig.add_trace(go.Scattermapbox(
-                    lat=_th["Latitude (Degrees)"], lon=_th["Longitude (Degrees)"],
-                    mode="markers", name=f"Retiring thermal (≥{TH_YR})",
-                    marker=dict(size=13, color="#E8743B", opacity=0.9, symbol="circle"),
-                    text=_th["Power Project Name"] + " · "
-                         + _th["Power Project Type"].astype(str) + " · "
-                         + _th["Retirement Year"].astype("Int64").astype(str),
-                    hovertemplate="<b>%{text}</b><extra></extra>"))
+                    lat=_dc["Latitude (Degrees)"], lon=_dc["Longitude (Degrees)"],
+                    mode="markers+text",
+                    marker=dict(size=(marker_scale * 0.6
+                                      + marker_scale * (_dmw / max(_dmw.max(), 1)) ** 0.5).clip(4, 26),
+                                color=DC_COLOR, opacity=0.5),
+                    text=["▣"] * len(_dc), textposition="middle center",
+                    textfont=dict(size=max(9, marker_scale), color=DC_COLOR),
+                    name="▣  Data centers",
+                    customdata=np.stack([_dc.get("Name", pd.Series("", index=_dc.index)).astype(str),
+                                         _dmw], axis=-1),
+                    hovertemplate="<b>%{customdata[0]}</b><br>Data center · "
+                                  "%{customdata[1]:.0f} MW<extra></extra>"))
                 if show_circles:
-                    for _, _t in _th.head(60).iterrows():
+                    for _, _d in _dc.head(80).iterrows():
                         _la, _lo = geo_signals.circle_polygon(
-                            _t["Latitude (Degrees)"], _t["Longitude (Degrees)"], TH_R)
+                            _d["Latitude (Degrees)"], _d["Longitude (Degrees)"], DC_R)
                         fig.add_trace(go.Scattermapbox(
                             lat=_la, lon=_lo, mode="lines", fill="toself",
-                            fillcolor="rgba(232,116,59,0.08)",
-                            line=dict(color="rgba(232,116,59,0.45)"),
+                            fillcolor="rgba(0,183,255,0.07)",
+                            line=dict(color="rgba(0,183,255,0.40)", width=1),
                             hoverinfo="skip", showlegend=False))
 
-        fig = add_nofar_layer(fig, show_nofar)
-
-        # ---- restricted POIs (NC/SC Duke data only) ----
-        if show_restricted_pois:
-            _rz = D.get("red_zone", pd.DataFrame()).copy()
-            if _rz.empty:
-                st.caption("No restricted-POI dataset loaded (Duke NC/SC only).")
-            else:
-                _lk = {str(c).strip().lower(): c for c in _rz.columns}
-                _latc = next((_lk[n] for n in ["latitude", "lat", "latitude (degrees)"]
-                              if n in _lk), None)
-                _lonc = next((_lk[n] for n in ["longitude", "lon", "lng", "long",
-                                               "longitude (degrees)"] if n in _lk), None)
-                _namc = next((_lk[n] for n in ["substation", "substation name", "poi",
-                                               "poi name", "name"] if n in _lk), None)
-                if _latc and _lonc:
-                    _rz = _rz.dropna(subset=[_latc, _lonc])
+    # ---------- retiring thermal + their radius ----------
+    if show_thermal and "Is Thermal" in G_ALL.columns:
+        _th = G_ALL[G_ALL["Is Thermal"].fillna(False)].dropna(
+            subset=["Latitude (Degrees)", "Longitude (Degrees)"])
+        if "Retirement Year" in _th.columns:
+            _th = _th[_th["Retirement Year"] >= TH_YR]
+        if f_state and "State" in _th.columns:
+            _th = _th[_th["State"].isin(f_state)]
+        if TH_TY and "Power Project Type" in _th.columns:
+            _th = _th[_th["Power Project Type"].isin(TH_TY)]
+        if len(_th):
+            _tmw = pd.to_numeric(_th["Capacity (MW)"], errors="coerce").fillna(0)
+            fig.add_trace(go.Scattermapbox(
+                lat=_th["Latitude (Degrees)"], lon=_th["Longitude (Degrees)"],
+                mode="markers+text",
+                marker=dict(size=(marker_scale * 0.6
+                                  + marker_scale * (_tmw / max(_tmw.max(), 1)) ** 0.5).clip(4, 26),
+                            color=THERMAL_COLOR, opacity=0.45),
+                text=["▲"] * len(_th), textposition="middle center",
+                textfont=dict(size=max(9, marker_scale), color=THERMAL_COLOR),
+                name=f"▲  Retiring thermal (≥{TH_YR})",
+                customdata=np.stack([_th["Power Project Name"].astype(str),
+                                     _th["Power Project Type"].astype(str), _tmw,
+                                     _th["Retirement Year"].astype("Int64").astype(str)], axis=-1),
+                hovertemplate="<b>%{customdata[0]}</b><br>%{customdata[1]} · "
+                              "%{customdata[2]:.0f} MW<br>Retires %{customdata[3]}<extra></extra>"))
+            if show_circles:
+                for _, _t in _th.head(80).iterrows():
+                    _la, _lo = geo_signals.circle_polygon(
+                        _t["Latitude (Degrees)"], _t["Longitude (Degrees)"], TH_R)
                     fig.add_trace(go.Scattermapbox(
-                        lat=_rz[_latc], lon=_rz[_lonc], mode="markers",
-                        name="Restricted POIs",
-                        marker=dict(size=11, color="#D7263D", symbol="triangle"),
-                        text=_rz[_namc] if _namc else "",
-                        hovertemplate="<b>%{text}</b><br>Restricted POI<extra></extra>"))
-                else:
-                    st.caption("Restricted-POI file has no coordinate columns.")
+                        lat=_la, lon=_lo, mode="lines", fill="toself",
+                        fillcolor="rgba(193,18,31,0.06)",
+                        line=dict(color="rgba(193,18,31,0.35)", width=1),
+                        hoverinfo="skip", showlegend=False))
 
+    # ---------- Nofar sites (unique colour, always on top) ----------
+    if show_nofar:
+        fig.add_trace(go.Scattermapbox(
+            lat=NOFAR_SITES["lat"], lon=NOFAR_SITES["lon"], mode="markers+text",
+            marker=dict(size=max(12, marker_scale + 4), color=NOFAR_COLOR, opacity=0.95),
+            text=["★"] * len(NOFAR_SITES), textposition="top center",
+            textfont=dict(size=16, color=NOFAR_COLOR, family="Space Grotesk"),
+            name="★  Nofar sites",
+            customdata=NOFAR_SITES["name"],
+            hovertemplate="<b>Nofar · %{customdata}</b><extra></extra>"))
+
+    # ---------- restricted POIs ----------
+    if show_restricted_pois:
+        _rz = D.get("red_zone", pd.DataFrame()).copy()
+        if _rz.empty:
+            st.caption("No restricted-POI dataset loaded (Duke NC/SC only).")
+        else:
+            _lk = {str(c).strip().lower(): c for c in _rz.columns}
+            _latc = next((_lk[n] for n in ["latitude", "lat"] if n in _lk), None)
+            _lonc = next((_lk[n] for n in ["longitude", "lon", "lng", "long"] if n in _lk), None)
+            _namc = next((_lk[n] for n in ["substation", "name", "poi"] if n in _lk), None)
+            if _latc and _lonc:
+                _rz = _rz.dropna(subset=[_latc, _lonc])
+                fig.add_trace(go.Scattermapbox(
+                    lat=_rz[_latc], lon=_rz[_lonc], mode="markers+text",
+                    marker=dict(size=9, color="#D7263D", opacity=0.7),
+                    text=["■"] * len(_rz), textposition="middle center",
+                    textfont=dict(size=10, color="#D7263D"),
+                    name="■  Restricted POIs",
+                    hovertext=_rz[_namc] if _namc else None, hoverinfo="text"))
+            else:
+                st.caption("Restricted-POI file has no coordinate columns.")
+
+    if mm.empty and not show_thermal:
+        st.warning("No projects match these filters.")
+    else:
+        _clat = float(mm["Latitude (Degrees)"].mean()) if len(mm) else 34.5
+        _clon = float(mm["Longitude (Degrees)"].mean()) if len(mm) else -81.0
+        fig.update_layout(
+            mapbox=dict(style="carto-positron", zoom=5.3,
+                        center={"lat": _clat, "lon": _clon}),
+            margin=dict(l=0, r=0, t=0, b=0), height=720, font_family="Inter",
+            legend=dict(bgcolor="rgba(255,255,255,0.9)", bordercolor="#E6E2FA",
+                        borderwidth=1, itemsizing="constant",
+                        yanchor="top", y=0.99, xanchor="left", x=0.01),
+            hoverlabel=dict(bgcolor="white", font_size=12))
         st.plotly_chart(fig, use_container_width=True,
                         config={"displayModeBar": True, "scrollZoom": True})
+
+        st.caption("Glyphs: ☀ solar · ▮ storage · ✦ wind · ▲ thermal · ▣ data center · "
+                   "★ Nofar. Utility territories are convex hulls of each balancing "
+                   "authority's projects — an approximation, not an official boundary.")
 
         with st.expander(f"📄 Table of the {len(mm)} projects shown"):
             _cols = [c for c in ["Power Project Name", "Power Project Type", "Capacity (MW)",
                                  "Detailed Status", "Owner", "Parent Company", "County",
                                  "State", "Balancing Authority Code", "PTC/ITC",
-                                 "Native American Lands", "Opportunity Score"]
-                     if c in mm.columns]
+                                 "Opportunity Score"] if c in mm.columns]
             st.dataframe(mm[_cols].sort_values("Opportunity Score", ascending=False),
                          hide_index=True, use_container_width=True, height=380)
 
@@ -1343,5 +1435,3 @@ with tab_score_methodology:
 <div class="row" style="margin-top:6px"><b>What it is:</b> {que}</div>
 <div class="row"><b>Why it matters for M&A:</b> {porque}</div>
 <div class="row" style="color:#6B668F"><b>Data source:</b> {fuente}</div></div>""", unsafe_allow_html=True)
-
-

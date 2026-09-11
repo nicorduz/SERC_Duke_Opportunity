@@ -418,11 +418,11 @@ with st.sidebar:
     st.markdown("### Universe")
     _scope_mode = st.radio("Scope", ["SERC (Non-ISO)", "Duke NC/SC only"], index=0, key="scope_mode")
     with st.expander("Geographic signals"):
-        TH_R  = st.slider("Thermal radius (km)", 1, 50, 10)
-        TH_YR = st.slider("Retiring from year", 2026, 2045, 2028)
+        TH_R  = st.slider("Thermal radius (km)", 1, 50, 10, key="sb_th_r")
+        TH_YR = st.slider("Retiring from year", 2026, 2045, 2028, key="sb_th_yr")
         TH_TY = st.multiselect("Plant type", sorted(scope.THERMAL_TYPES),
-                               default=sorted(scope.THERMAL_TYPES))
-        DC_R  = st.slider("Data center radius (km)", 1, 60, 20)
+                               default=sorted(scope.THERMAL_TYPES), key="sb_th_ty")
+        DC_R  = st.slider("Data center radius (km)", 1, 60, 20, key="sb_dc_r")
 if _scope_mode == "Duke NC/SC only":
     g = scope.apply_scope(g, states=["NC", "SC"], duke_only=True)
 else:
@@ -734,8 +734,10 @@ with tab_targets_playbooks:
         st.markdown('<div class="sect">Pick a target</div>', unsafe_allow_html=True)
         f1, f2 = st.columns(2)
         _st_opts = sorted(g["State"].dropna().unique())
-        stt = f1.multiselect("State", _st_opts, default=_st_opts, label_visibility="collapsed")
-        minmw = f2.slider("Min MW", 0.0, 80.0, 0.0, 1.0, label_visibility="collapsed")
+        stt = f1.multiselect("State", _st_opts, default=_st_opts,
+                             label_visibility="collapsed", key="tgt_state")
+        minmw = f2.slider("Min MW", 0.0, 80.0, 0.0, 1.0,
+                          label_visibility="collapsed", key="tgt_minmw")
         tt = top[top["State"].isin(stt) & (top["Capacity (MW)"] >= minmw)] if len(top) \
              else top
         if tt.empty:
@@ -743,7 +745,7 @@ with tab_targets_playbooks:
             st.info("No targets match the current filters or threshold. "
                     "Lower the threshold in Score & Methodology or widen the Universe.")
         if not tt.empty:
-            sel = st.selectbox("Target", tt["Generator ID"].head(80),
+            sel = st.selectbox("Target", tt["Generator ID"].head(80), key="tgt_sel",
                                format_func=lambda i: (lambda r: f"{r['Power Project Name']} · {r['County']} {r['State']} · {r['Capacity (MW)']:.0f} MW · ★{r['Opportunity Score']:.1f}")(tt.set_index("Generator ID").loc[i]),
                                label_visibility="collapsed")
             row = pd.concat([pd.Series({"Generator ID": sel}), top.set_index("Generator ID").loc[sel]])
@@ -877,49 +879,56 @@ with tab_map:
     with st.expander("🔎 Map filters", expanded=True):
         r1 = st.columns(4)
         f_state = r1[0].multiselect("State", sorted(g["State"].dropna().unique()),
-                                    default=sorted(g["State"].dropna().unique()))
+                                    default=sorted(g["State"].dropna().unique()),
+                                    key="map_state")
         _ba_opts = sorted(g["Balancing Authority Code"].dropna().unique()) \
             if "Balancing Authority Code" in g.columns else []
-        f_ba = r1[1].multiselect("Balancing authority", _ba_opts, default=_ba_opts)
+        f_ba = r1[1].multiselect("Balancing authority", _ba_opts, default=_ba_opts,
+                                 key="map_ba")
         _ty_opts = sorted(g["Power Project Type"].dropna().unique()) \
             if "Power Project Type" in g.columns else sorted(g["Technology"].dropna().unique())
-        f_type = r1[2].multiselect("Technology", _ty_opts, default=_ty_opts)
+        f_type = r1[2].multiselect("Technology", _ty_opts, default=_ty_opts, key="map_type")
         f_status = r1[3].multiselect("Status", sorted(g["Detailed Status"].dropna().unique()),
-                                     default=[])
+                                     default=[], key="map_status")
 
         r2 = st.columns(4)
         _mwmax = int(np.nan_to_num(g["Capacity (MW)"].max(), nan=1000)) or 1000
-        f_mw = r2[0].slider("Capacity (MW)", 0, _mwmax, (0, _mwmax))
+        f_mw = r2[0].slider("Capacity (MW)", 0, _mwmax, (0, _mwmax), key="map_mw")
         f_score = r2[1].slider("Min opportunity score", 0.0,
                                float(max(_score_ceiling(top, default=10.0), 10.0)),
-                               0.0, 0.5)
+                               0.0, 0.5, key="map_score")
         _owner_opts = sorted(g["Owner"].dropna().unique()) if "Owner" in g.columns else []
-        f_owner = r2[2].multiselect("Owner", _owner_opts, default=[])
+        f_owner = r2[2].multiselect("Owner", _owner_opts, default=[], key="map_owner")
         color_by = r2[3].selectbox(
             "Colour by",
-            ["Technology", "Status", "Opportunity", "Balancing authority", "Parent company"])
+            ["Technology", "Status", "Opportunity", "Balancing authority", "Parent company"],
+            key="map_colorby")
 
         r3 = st.columns(4)
-        f_native = r3[0].selectbox("Native American lands", ["Any", "Yes", "No"])
-        f_lowinc = r3[1].selectbox("Low income community", ["Any", "Yes", "No"])
-        f_coalec = r3[2].selectbox("Retired-coal energy community", ["Any", "Yes", "No"])
+        f_native = r3[0].selectbox("Native American lands", ["Any", "Yes", "No"], key="map_native")
+        f_lowinc = r3[1].selectbox("Low income community", ["Any", "Yes", "No"], key="map_lowinc")
+        f_coalec = r3[2].selectbox("Retired-coal energy community", ["Any", "Yes", "No"],
+                                   key="map_coalec")
         f_incent = r3[3].multiselect("Incentive (PTC/ITC)",
                                      sorted(g["PTC/ITC"].dropna().unique())
-                                     if "PTC/ITC" in g.columns else [], default=[])
+                                     if "PTC/ITC" in g.columns else [], default=[],
+                                     key="map_incent")
 
         r4 = st.columns(4)
-        f_contract = r4[0].selectbox("Contract", ["Any", "Has offtaker", "No offtaker"])
-        f_signal = r4[1].selectbox("External distress signal", ["Any", "With signal", "Without"])
-        f_btm = r4[2].selectbox("Behind the meter", ["Any", "Yes", "No"])
-        only_opp = r4[3].toggle("Opportunities only", value=False)
+        f_contract = r4[0].selectbox("Contract", ["Any", "Has offtaker", "No offtaker"],
+                                     key="map_contract")
+        f_signal = r4[1].selectbox("External distress signal", ["Any", "With signal", "Without"],
+                                   key="map_signal")
+        f_btm = r4[2].selectbox("Behind the meter", ["Any", "Yes", "No"], key="map_btm")
+        only_opp = r4[3].toggle("Opportunities only", value=False, key="map_onlyopp")
 
         st.markdown("**Layers**")
         l = st.columns(5)
-        show_nofar = l[0].toggle("Nofar sites", value=True)
-        show_dc = l[1].toggle("Data centers", value=True)
-        show_thermal = l[2].toggle("Retiring thermal", value=True)
-        show_circles = l[3].toggle("Radius circles", value=True)
-        show_restricted_pois = l[4].toggle("Restricted POIs", value=False)
+        show_nofar = l[0].toggle("Nofar sites", value=True, key="map_l_nofar")
+        show_dc = l[1].toggle("Data centers", value=True, key="map_l_dc")
+        show_thermal = l[2].toggle("Retiring thermal", value=True, key="map_l_thermal")
+        show_circles = l[3].toggle("Radius circles", value=True, key="map_l_circles")
+        show_restricted_pois = l[4].toggle("Restricted POIs", value=False, key="map_l_poi")
 
     # ---------- apply filters ----------
     mm = g.dropna(subset=["Latitude (Degrees)", "Longitude (Degrees)"]).copy()
@@ -1179,7 +1188,7 @@ with tab_action_queue:
     else:
         st.info("No distress signals yet — run the live updates (media, CourtListener) in Data & updates.")
 
-    st.download_button("⬇️ Action Queue CSV", show.to_csv(index=False),
+    st.download_button("⬇️ Action Queue CSV", show.to_csv(index=False), key="btn_dl_queue",
                        file_name="action_queue.csv", mime="text/csv")
 
 # ─────────────────────────────── TEAM HUB
@@ -1234,16 +1243,17 @@ with tab_date_updates:
             if st.button(f"Update", key=f"u{k}", use_container_width=True):
                 with st.spinner("Fetching..."): fn()
                 st.cache_data.clear(); st.rerun()
-    if st.button("Update all four", type="primary"):
+    if st.button("Update all four", type="primary", key="btn_update_all"):
         with st.spinner("Fetching all live sources..."):
             fetch_media(); fetch_ferc(); fetch_courtlistener(); fetch_eia860m()
         st.cache_data.clear(); st.rerun()
-    if st.button("🔎 Scan web (Google News)"):
+    if st.button("🔎 Scan web (Google News)", key="btn_scan_web"):
         with st.spinner("Searching news for NC/SC company stress..."):
             ws = web_signals.scan_web_signals(g, ownership)
             ws.to_parquet(f"{DATA}/web_signals.parquet", index=False)
         st.cache_data.clear(); st.rerun()
-    if st.button("🧭 Update distress signals (entities → CourtListener + news + liens + county)"):
+    if st.button("🧭 Update distress signals (entities → CourtListener + news + liens + county)",
+                 key="btn_update_distress"):
         with st.spinner("Building entity list and scanning distress sources..."):
             fetch_distress()
         st.cache_data.clear(); st.rerun()
@@ -1277,7 +1287,7 @@ with tab_score_methodology:
         for k, v in DW.items():
             st.slider(k, -3.0, 6.0, float(v), 0.5, key=f"w_{k}")
         st.caption(f"With these values: {len(top)} opportunities out of {len(g)} generators.")
-        if st.button("Restore default values"):
+        if st.button("Restore default values", key="btn_restore_weights"):
             for k in DW: st.session_state[f"w_{k}"] = float(DW[k])
             st.session_state["thr"] = 0.5; st.rerun()
 

@@ -38,10 +38,7 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
     out = {}
     op = g[g["Is Operating"]].copy()
 
-    qf = op[(op["Is QF Scale"]) & (op["Age (yrs)"] >= 8)].copy()
-    qf["Reason"] = ("QF-scale (" + qf["Capacity (MW)"].round(1).astype(str) + " MW), age "
-                    + qf["Age (yrs)"].astype(str) + "y — repowering / roll-up candidate")
-    out["qf_rollup"] = qf.sort_values(["County", "Age (yrs)"], ascending=[True, False])
+    # [removed] aging-QF roll-up screen (small 2-5 MW old QFs are out of scope)
 
     cc = op[op["Yrs to Contract End"].notna() & (op["Yrs to Contract End"] <= 5)].copy()
     cc["Reason"] = np.where(cc["Yrs to Contract End"] <= 0,
@@ -66,7 +63,7 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
     out["late_stage"] = ls.sort_values(["Dev Stage Score", "Capacity (MW)"], ascending=False)
 
     ib = g[g["IX Cost $/kW"].notna() & (g["IX Cost $/kW"] > 150)].copy()
-    ib["Reason"] = "IX cost $" + ib["IX Cost $/kW"].astype(int).astype(str) + "/kW upgrade burden"
+    ib["Reason"] = "IX cost $" + ib["IX Cost $/kW"].astype(int).astype(str) + "/kW — interconnection cost viability flag"
     out["ix_burden"] = ib.sort_values("IX Cost $/kW", ascending=False)
 
     rh = op[op["Yrs to Est Retirement"].notna() & (op["Yrs to Est Retirement"] <= 5)].copy()
@@ -76,7 +73,7 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
     # NEW: red-zone constrained POI
     rz = red_zone_flags(g, red_zone)
     rzd = g[rz].copy()
-    rzd["Reason"] = "POI matches DEP Red Zone constrained substation — upgrade exposure / seller leverage"
+    rzd["Reason"] = "POI in a Duke congestion zone (constrained substation/line) — upgrade exposure / seller leverage"
     out["red_zone"] = rzd
     g = g.assign(_red_zone=rz)
 
@@ -124,18 +121,55 @@ def opportunity_screens(g, eia=None, dq=None, red_zone=None, restrictions=None, 
         out["_owner_map"] = dict(zip(j["Generator ID"], j["Entity Name"]))
     return out
 
-DEFAULT_WEIGHTS = {"dev_distress": 4, "duke_withdrawn_match": 3.5, "contract_cliff": 3,
-                   "underperf": 3, "ix_burden": 2.5, "red_zone": 2.5, "qf_rollup": 2,
-                   "retirement": 2, "late_stage": 1.5, "withdrawal_cluster": 1,
-                   "warn_county": 0.5, "county_risk": -1,
-                   "distress_external": 4.0, "thermal_retire": 2.0, "datacenter_prox": 1.5}
+DEFAULT_WEIGHTS = {              # 0-10 integer scale (set via +/- steppers in the UI)
+    "dev_distress": 8,          # graded low/med/high  (see dev_stress_severity)
+    "mna_opportunity": 8,       # NEW — Nofar is a buyer: owner in play
+    "distress_company": 8,      # DIRECT distress (liens/bankruptcy/news matched to OWNER)
+    "duke_withdrawn_match": 7,  # binary yes/no  (fires => full weight)
+    "contract_cliff": 6,
+    "underperf": 6,
+    "ix_burden": 5,            # label: Interconnection cost viability
+    "red_zone": 5,            # label: Duke congestion zone (POI)
+    "retirement": 4,
+    "withdrawal_cluster": 4,
+    "thermal_retire": 4,
+    "datacenter_prox": 4,
+    "late_stage": 3,
+    "distress_geographic": 3,  # AMBIENT distress (county/state — lower accuracy, toggleable)
+    "warn_county": 2,          # new search signals — county layoffs (WARN)
+    "county_risk": -2,         # negative screen
+}
+
+# UI-facing labels (apply the renames without touching the internal screen keys)
+SCREEN_LABELS = {
+    "dev_distress": "Development stress", "mna_opportunity": "M&A opportunity (owner in play)",
+    "distress_company": "Distress — by company (high confidence)",
+    "distress_geographic": "Distress — geographic fallback (low accuracy)",
+    "duke_withdrawn_match": "Duke confirmed withdrawal", "contract_cliff": "Contract cliff (PPA <5y)",
+    "underperf": "Underperformance (CF vs forecast)", "ix_burden": "Interconnection cost viability",
+    "red_zone": "Duke congestion zone (POI)", "retirement": "Retirement horizon",
+    "withdrawal_cluster": "Continued withdrawn cluster (county)", "thermal_retire": "Retired coal-plant proximity",
+    "datacenter_prox": "Data-center proximity", "late_stage": "Late-stage (bid-ready)",
+    "warn_county": "New search signals — county (layoffs/WARN)", "county_risk": "County risk (penalty)",
+}
+
+def dev_stress_severity(dev_df):
+    """Map Detailed Status -> low/medium/high factor (0.33/0.66/1.0) for graded scoring."""
+    if dev_df is None or dev_df.empty: return {}
+    HIGH = ("suspend", "cancel", "terminat", "withdraw")
+    MED  = ("postpone", "delay", "hold", "paus")
+    out = {}
+    for gid, stt in zip(dev_df["Generator ID"], dev_df.get("Detailed Status", "")):
+        s = str(stt).lower()
+        out[gid] = 1.0 if any(h in s for h in HIGH) else (0.66 if any(m in s for m in MED) else 0.33)
+    return {"dev_distress": out}
 WEIGHTS = DEFAULT_WEIGHTS  # retro-compatibilidad
 
 SCORE_MAX = 10.0    # every project is graded on a fixed 0-10 scale
 REFERENCE_HITS = 5  # a 10/10 = firing the five heaviest screens at once
 
 def composite_score(g, screens, weights=None, threshold=0.0, scale_max=SCORE_MAX,
-                    reference_hits=REFERENCE_HITS):
+                    reference_hits=REFERENCE_HITS, severity=None):
     """
     Weighted sum of the screens, rescaled to a fixed 0-10 grade.
 
@@ -156,8 +190,10 @@ def composite_score(g, screens, weights=None, threshold=0.0, scale_max=SCORE_MAX
     for key, w in W.items():
         d = screens.get(key)
         if d is None or d.empty or "Generator ID" not in d.columns: continue
+        sev = (severity or {}).get(key, {})
         for gid, r in zip(d["Generator ID"], d["Reason"]):
-            s[gid] = s.get(gid, 0) + w
+            f = sev.get(gid, 1.0)                 # graded factor (dev stress / distress tier)
+            s[gid] = s.get(gid, 0) + w * f
             reasons.setdefault(gid, []).append(("⚠️ " if w < 0 else "") + r)
             fired.setdefault(gid, []).append(key)
 

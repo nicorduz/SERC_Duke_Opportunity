@@ -14,6 +14,7 @@ from pathlib import Path
 from preprocess_orennia import load_and_reduce
 import parsers, engine, actions
 import scope, geo_signals, distress_sources
+from woodmac_integration import load_woodmac, build_mna_index, mna_screen
 
 # Optional modules: a missing file or dependency must NOT take the app down.
 # Each one degrades to a no-op and the affected feature simply says why.
@@ -427,6 +428,8 @@ with st.sidebar:
         TH_TY = st.multiselect("Plant type", sorted(scope.THERMAL_TYPES),
                                default=sorted(scope.THERMAL_TYPES), key="sb_th_ty")
         DC_R  = st.slider("Data center radius (km)", 1, 60, 20, key="sb_dc_r")
+        st.toggle("Include geographic distress fallback (low accuracy)",
+                  key="use_geo_distress", value=False)
 if _scope_mode == "Duke NC/SC only":
     g = scope.apply_scope(g, states=["NC", "SC"], duke_only=True)
 else:
@@ -456,7 +459,21 @@ try:
     _pv = DATA / "distress_provenance.parquet"
     per_proj   = pd.read_parquet(_pp) if _pp.exists() else pd.DataFrame()
     provenance = pd.read_parquet(_pv) if _pv.exists() else pd.DataFrame()
-    scr["distress_external"] = distress_sources.distress_screen(per_proj)
+    # company-first distress (DIRECT) vs geographic fallback (AMBIENT, toggleable)
+    _use_geo = st.session_state.get("use_geo_distress", False)
+    if len(provenance) and "match_type" in provenance.columns:
+        def _mk(_df, _msg):
+            if not len(_df): return pd.DataFrame(columns=["Generator ID", "Reason"])
+            _gg = _df.groupby("Generator ID").size().reset_index(name="n")
+            _gg["Reason"] = _msg + " (" + _gg["n"].astype(str) + " signal(s), per CourtListener/WARN/News)"
+            return _gg[["Generator ID", "Reason"]]
+        _dir = provenance[provenance["match_type"].str.upper() == "DIRECT"]
+        _amb = provenance[provenance["match_type"].str.upper() == "AMBIENT"]
+        scr["distress_company"]    = _mk(_dir, "Distress matched to owner/company — high confidence")
+        scr["distress_geographic"] = _mk(_amb, "Distress at county/state level — owner unknown, low accuracy") if _use_geo else pd.DataFrame(columns=["Generator ID", "Reason"])
+    else:
+        scr["distress_company"]    = distress_sources.distress_screen(per_proj)
+        scr["distress_geographic"] = pd.DataFrame(columns=["Generator ID", "Reason"])
     _th_scr, TH_DET = geo_signals.thermal_retirement_proximity(
         G_ALL, thermal_types=scope.THERMAL_TYPES, radius_km=TH_R,
         from_year=TH_YR, plant_types=TH_TY)
@@ -470,10 +487,18 @@ except Exception as _e:
     TH_DET, DC_DET = pd.DataFrame(), pd.DataFrame()
     st.sidebar.warning(f"New signals not loaded: {_e}")
 # <<< NOFAR-ADD
+# >>> NOFAR-ADD: WoodMac M&A screen (Nofar is a buyer: owner in play)
+try:
+    scr["mna_opportunity"] = mna_screen(g, build_mna_index(load_woodmac(str(DATA))))
+except Exception as _e:
+    scr["mna_opportunity"] = pd.DataFrame(columns=["Generator ID", "Reason"])
+    st.sidebar.caption(f"M&A signal off (add WoodMac files to data/): {_e}")
+# <<< NOFAR-ADD
 DW = engine.DEFAULT_WEIGHTS
 weights = {k: st.session_state.get(f"w_{k}", v) for k, v in DW.items()}
 THRESHOLD = st.session_state.get("thr", 0.5)
-top = engine.composite_score(g, scr, weights, THRESHOLD)
+_sev = engine.dev_stress_severity(scr.get("dev_distress"))
+top = engine.composite_score(g, scr, weights, THRESHOLD, severity=_sev)
 # Guarantee the columns the tables reference exist even when nothing scored,
 # so an empty result renders an empty table instead of raising KeyError.
 if top.empty:
@@ -786,7 +811,7 @@ FMT = {"Capacity (MW)": st.column_config.NumberColumn("MW", format="%.1f"),
 with tab_dashboard:
     a, b = st.columns([3, 2])
     with a:
-        st.markdown('<div class="sect">Top opportunities</div><div class="sub">Composite of nine screens — every point decomposes in the Why column.</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sect">Top opportunities</div><div class="sub">Composite of weighted screens — every point decomposes in the Why column.</div>', unsafe_allow_html=True)
         if top.empty:
             st.info("No project scored above the current threshold. Lower it in "
                     "**Score & Methodology**, widen the Universe in the sidebar, or run "
@@ -798,10 +823,10 @@ with tab_dashboard:
                          column_config=FMT, hide_index=True)
     with b:
         st.markdown('<div class="sect">Where the signals are</div><div class="sub">Hits per screen (a project can fire several).</div>', unsafe_allow_html=True)
-        counts = {"QF roll-up": len(scr["qf_rollup"]), "Contract cliff": len(scr["contract_cliff"]),
-                  "Underperformance": len(scr["underperf"]), "Dev distress": len(scr["dev_distress"]),
-                  "Late-stage": len(scr["late_stage"]), "IX burden": len(scr["ix_burden"]),
-                  "Red zone": len(scr["red_zone"]), "County risk": len(scr["county_risk"])}
+        counts = {engine.SCREEN_LABELS.get(k, k): len(scr[k]) for k in
+                  ["contract_cliff", "underperf", "dev_distress", "mna_opportunity",
+                   "ix_burden", "red_zone", "distress_company", "distress_geographic",
+                   "withdrawal_cluster", "late_stage", "county_risk"] if k in scr}
         cdf = pd.DataFrame(counts.items(), columns=["Screen", "Hits"]).sort_values("Hits")
         fig = px.bar(cdf, x="Hits", y="Screen", orientation="h", color_discrete_sequence=[INDIGO])
         fig.update_layout(height=300, margin=dict(l=0, r=10, t=6, b=0), plot_bgcolor="white",
@@ -833,7 +858,8 @@ with tab_targets_playbooks:
         _st_opts = sorted(g["State"].dropna().unique())
         stt = f1.multiselect("State", _st_opts, default=_st_opts,
                              label_visibility="collapsed", key="tgt_state")
-        minmw = f2.slider("Min MW", 0.0, 80.0, 0.0, 1.0,
+        f2.caption("All data is 25 MW and above")
+        minmw = f2.slider("Min MW (AC)", 25, 500, 25, 5,
                           label_visibility="collapsed", key="tgt_minmw")
         tt = top[top["State"].isin(stt) & (top["Capacity (MW)"] >= minmw)] if len(top) \
              else top
@@ -857,8 +883,9 @@ with tab_targets_playbooks:
     <tr><td style="color:#6B668F">Status</td><td>{row['Detailed Status']}</td></tr>
     <tr><td style="color:#6B668F">Owner (EIA)</td><td>{own or "unknown — step 1 of playbook"}</td></tr>
     <tr><td style="color:#6B668F">Age</td><td>{row['Age (yrs)'] if pd.notna(row['Age (yrs)']) else '—'} yrs</td></tr>
-    <tr><td style="color:#6B668F">CF (12m / fcst)</td><td>{f"{row['CF (12m)']*100:.1f}%" if pd.notna(row['CF (12m)']) else '—'} / {f"{row['CF (fcst 10y)']*100:.1f}%" if pd.notna(row['CF (fcst 10y)']) else '—'}</td></tr>
-    <tr><td style="color:#6B668F">Contract</td><td>{f"{row['Contract Price ($/MWh)']:.0f} $/MWh" if pd.notna(row['Contract Price ($/MWh)']) else '—'}{f" · ends {str(row['Contract Termination Date'])[:10]}" if pd.notna(row['Contract Termination Date']) else ""}</td></tr>
+    <tr><td style="color:#6B668F">Capacity factor</td><td>{f"{row['CF (12m)']*100:.1f}% (12-mo actual) / {row['CF (fcst 10y)']*100:.1f}% (10-yr forecast)" if pd.notna(row['CF (12m)']) else '—'} <span style="color:#9a95bf">(per Orennia)</span></td></tr>
+    <tr><td style="color:#6B668F">COD</td><td>{str(row['First Power Date'])[:10] if pd.notna(row['First Power Date']) else '—'} <span style="color:#9a95bf">(per Orennia)</span></td></tr>
+    <tr><td style="color:#6B668F">Contract</td><td>{f"{row['Contract Price ($/MWh)']:.0f} $/MWh" if pd.notna(row['Contract Price ($/MWh)']) else '—'}{f" · ends {str(row['Contract Termination Date'])[:10]}" if pd.notna(row['Contract Termination Date']) else ""} <span style="color:#9a95bf">(per Orennia)</span></td></tr>
     <tr><td style="color:#6B668F">Queue</td><td>{row['Queue ID'] if pd.notna(row['Queue ID']) else '—'} · {row['Queue Cycle'] if pd.notna(row['Queue Cycle']) else ''}</td></tr>
     <tr><td style="color:#6B668F">Why flagged</td><td>{row['Why']}</td></tr>
     </table></div>""", unsafe_allow_html=True)
@@ -1490,7 +1517,7 @@ with tab_date_updates:
 # ─────────────────────────────── SCORE & METHODOLOGY
 with tab_score_methodology:
     st.markdown('<div class="sect">How the score is calculated</div>'
-                '<div class="sub">Weighted sum: each project passes through 9 filters ("screens"). '
+                '<div class="sub">Weighted sum: each project passes through the weighted screens. '
                 'For every rule it meets, it adds the weight assigned to that screen. It is a simple and auditable sum: '
                 'the Why column lists exactly what contributed to the score. A project is classified as an OPPORTUNITY if its total ≥ the threshold.</div>',
                 unsafe_allow_html=True)
@@ -1512,31 +1539,21 @@ with tab_score_methodology:
         st.slider("Opportunity threshold — minimum grade to count as a target",
                   0.0, 10.0, 0.5, 0.1, key="thr")
 
-        SCREEN_LABELS = {
-            "dev_distress": "Development distress", "duke_withdrawn_match": "Duke-confirmed withdrawal",
-            "contract_cliff": "Contract cliff (PPA)", "underperf": "Underperformance",
-            "ix_burden": "Interconnection burden", "red_zone": "Duke red zone",
-            "qf_rollup": "Aging QF universe", "retirement": "Retirement horizon",
-            "late_stage": "Late-stage pipeline", "withdrawal_cluster": "County withdrawal cluster",
-            "warn_county": "WARN in county", "county_risk": "County risk (subtracts)",
-            "distress_external": "External distress (liens/layoffs/bankruptcy)",
-            "thermal_retire": "Near retiring thermal", "datacenter_prox": "Near data center",
-        }
+        SCREEN_LABELS = engine.SCREEN_LABELS
 
         def weight_control(k):
-            """Rope (slider) + digital stepper, two widgets kept in sync."""
-            lo, hi = (-10.0, 0.0) if DW[k] < 0 else (0.0, 10.0)
-            skey, nkey = f"w_{k}", f"wn_{k}"
-            st.session_state.setdefault(skey, float(DW[k]))
-            st.session_state.setdefault(nkey, float(DW[k]))
-            def _from_slider(): st.session_state[nkey] = st.session_state[skey]
-            def _from_number(): st.session_state[skey] = st.session_state[nkey]
-            c_s, c_n = st.columns([4, 1.15])
-            c_s.slider(SCREEN_LABELS.get(k, k), lo, hi, step=0.25, key=skey,
-                       on_change=_from_slider)
-            c_n.number_input("value", lo, hi, step=0.25, key=nkey,
-                             on_change=_from_number, label_visibility="collapsed")
-            return float(st.session_state[skey])
+            """Integer 0-10 weight with - / value / + buttons (no decimals)."""
+            lo, hi = (-10, 0) if DW[k] < 0 else (0, 10)
+            skey = f"w_{k}"
+            st.session_state.setdefault(skey, int(round(DW[k])))
+            c_lbl, c_m, c_v, c_p = st.columns([0.58, 0.14, 0.12, 0.16])
+            c_lbl.markdown(SCREEN_LABELS.get(k, k))
+            if c_m.button("－", key=f"wm_{k}"):
+                st.session_state[skey] = max(lo, int(st.session_state[skey]) - 1)
+            c_v.markdown(f"**{int(st.session_state[skey])}**")
+            if c_p.button("＋", key=f"wp_{k}"):
+                st.session_state[skey] = min(hi, int(st.session_state[skey]) + 1)
+            return int(st.session_state[skey])
 
         st.markdown("**Positive screens — evidence of an opportunity**")
         for k in [x for x in DW if DW[x] >= 0]:
@@ -1584,9 +1601,6 @@ with tab_score_methodology:
       "red_zone": ("Duke red zone", "The point of interconnection (POI) matches a substation on DEP's constrained-zone list.",
         "Duke declared those zones saturated: connecting there means long, costly upgrades. Dual signal: risk for new projects, scarcity (value) for already-connected positions.",
         "Text join: Orennia 'Point of Interconnection' vs Duke's DEP Red Zone file. ⚠️ Partial coverage: only ~236 of 1,271 generators carry POI text in Orennia."),
-      "qf_rollup": ("Aging QF universe", "Operating, ≤5.5 MW, and ≥8 years old.",
-        "This is NC's PURPA fleet: hundreds of small same-generation plants with fragmented owners and old contracts. Roll-up thesis: buy several, run as a portfolio, repower.",
-        "Capacity, 'First Power Date' and status, from Orennia. 5.5 MW = NC's standard PURPA threshold."),
       "retirement": ("Retirement horizon", "Estimated retirement date within ≤5 years.",
         "A retiring site keeps its most valuable pieces: the interconnection and the land. Site/queue reuse play with new equipment.",
         "'Estimated Retirement Date' column of Orennia."),

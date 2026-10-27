@@ -55,6 +55,7 @@ FILES = {
     "mna":     "M_ADetails.csv",
     "vc":      "GranularVCData.csv",
     "company": "power-generating_unit_company_summary.xlsx",
+    "company_slim": "company_summary_slim.parquet",   # 0.16 MB — GitHub-friendly replacement
 }
 
 US_STATE_ABBR = {
@@ -115,7 +116,11 @@ def load_woodmac(data_dir: str) -> dict:
     bess  = _csv("bess")
     mna   = _csv("mna")
     vc    = _csv("vc")
-    company = pd.read_excel(os.path.join(data_dir, FILES["company"]), dtype=str)
+    # Prefer the slim parquet (0.16 MB) committed to the repo; fall back to the
+    # full 51 MB xlsx only if the parquet is absent (xlsx is too big for GitHub).
+    _slim = os.path.join(data_dir, FILES["company_slim"])
+    _xlsx = os.path.join(data_dir, FILES["company"])
+    company = pd.read_parquet(_slim) if os.path.exists(_slim) else pd.read_excel(_xlsx, dtype=str)
 
     # tidy trailing spaces that appear in WoodMac status columns
     for df in (solar, bess, mna, vc):
